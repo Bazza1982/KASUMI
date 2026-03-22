@@ -1,7 +1,7 @@
 {
-  "name": "excel-shell",
+  "name": "kasumi",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,7 +16,10 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "electron:dev": "ELECTRON=true vite",
+    "electron:build": "ELECTRON=true tsc && ELECTRON=true vite build && electron-builder",
+    "electron:preview": "ELECTRON=true vite preview"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.11.2",
@@ -51,6 +54,8 @@
     "@vitejs/plugin-react": "^4.3.1",
     "@vitest/coverage-v8": "^4.1.0",
     "@vitest/ui": "^4.1.0",
+    "electron": "^41.0.3",
+    "electron-builder": "^26.8.1",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.5",
     "eslint-plugin-react-hooks": "^7.0.1",
@@ -60,6 +65,68 @@
     "typescript": "^5.2.2",
     "typescript-eslint": "^8.57.1",
     "vite": "^5.3.1",
+    "vite-plugin-electron": "^0.29.1",
+    "vite-plugin-electron-renderer": "^0.14.6",
     "vitest": "^4.1.0"
+  },
+  "main": "dist-electron/main.js",
+  "build": {
+    "appId": "com.kasumi.platform",
+    "productName": "KASUMI",
+    "copyright": "Copyright © 2026 KASUMI Platform",
+    "directories": {
+      "output": "release",
+      "buildResources": "electron/assets"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "electron/assets/icon.ico"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "electron/assets/icon.icns",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "electron/assets/icon.png",
+      "category": "Office"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "KASUMI",
+      "installerIcon": "electron/assets/icon.ico",
+      "installerHeaderIcon": "electron/assets/icon.ico"
+    },
+    "publish": null
   }
 }

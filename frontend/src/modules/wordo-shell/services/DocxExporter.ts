@@ -236,13 +236,13 @@ export async function exportToDocx(
   })
 
   const blob = await Packer.toBlob(doc)
-  const url  = URL.createObjectURL(blob)
-  const a    = Object.assign(document.createElement('a'), {
-    href: url,
-    download: `${kasumiDoc.title.replace(/[^\w\u4e00-\u9fa5 _-]/g, '')}.docx`,
+  const safeName = `${kasumiDoc.title.replace(/[^\w\u4e00-\u9fa5 _-]/g, '') || 'document'}.docx`
+
+  // Use native save dialog in Electron, browser download otherwise
+  const { saveFile } = await import('../../../platform/native/useNativeBridge')
+  await saveFile({
+    defaultName: safeName,
+    filters: [{ name: 'Word Document', extensions: ['docx'] }],
+    data: blob,
   })
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
 }

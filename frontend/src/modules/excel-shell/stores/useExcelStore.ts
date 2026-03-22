@@ -406,12 +406,9 @@ export const useExcelStore = create<ExcelState>((set, get) => {
 
       const csv = [headers.join(','), ...rows].join('\n')
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${sheet.tableName}.csv`
-      a.click()
-      URL.revokeObjectURL(url)
+      import('../../../platform/native/useNativeBridge').then(({ saveFile }) => {
+        saveFile({ defaultName: `${sheet.tableName}.csv`, filters: [{ name: 'CSV', extensions: ['csv'] }], data: blob })
+      })
     },
 
     importFromCsv: async (file: File) => {
@@ -492,7 +489,10 @@ export const useExcelStore = create<ExcelState>((set, get) => {
         const ws = XLSX.utils.aoa_to_sheet(wsData)
         const wb = XLSX.utils.book_new()
         XLSX.utils.book_append_sheet(wb, ws, sheet.tableName.slice(0, 31)) // Excel sheet name limit
-        XLSX.writeFile(wb, `${sheet.tableName}.xlsx`)
+        const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer
+        import('../../../platform/native/useNativeBridge').then(({ saveFile }) => {
+          saveFile({ defaultName: `${sheet.tableName}.xlsx`, filters: [{ name: 'Excel Workbook', extensions: ['xlsx'] }], data: buf })
+        })
       })
     },
 
