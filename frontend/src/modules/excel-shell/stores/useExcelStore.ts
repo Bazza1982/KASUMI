@@ -3,6 +3,7 @@ import type { GridCoord, SelectionRange, SheetContext, FieldMeta, RowRecord, Tab
 import { MockAdapter } from '../adapters/baserow/MockAdapter'
 import { BaserowAdapter } from '../adapters/baserow/BaserowAdapter'
 import { renderCellValue } from '../grid/renderers'
+import { objectRegistry, makeObjectId } from '../../../platform/object-registry'
 
 // Adapter selection — reads from localStorage so ConnectionPanel can switch at runtime
 const _useMock = typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_use_mock') !== 'false' : true
@@ -134,6 +135,12 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     loadTables: async () => {
       const tables = await adapter.getTables(configuredDbId)
       set({ tables })
+      // Register every table in the platform object registry so WORDO can reference them
+      tables.forEach(t => objectRegistry.register({
+        id: makeObjectId('nexcel', t.id),
+        shell: 'nexcel',
+        label: t.name,
+      }))
       if (tables.length > 0 && !get().activeTableId) {
         await get().loadSheet(tables[0].id)
       }

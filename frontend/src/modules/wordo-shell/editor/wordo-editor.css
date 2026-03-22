@@ -1,0 +1,109 @@
+/* ============================================================
+   KASUMI WORDO — Editor Surface Styles
+   Applied inside .wordo-editor-surface .ProseMirror
+   ============================================================ */
+
+.wordo-editor-surface .ProseMirror {
+  outline: none;
+  min-height: 100%;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Placeholder ──────────────────────────────────────────── */
+.wordo-editor-surface .ProseMirror p.is-empty::before {
+  content: attr(data-placeholder);
+  color: #bbb;
+  pointer-events: none;
+  position: absolute;
+}
+
+/* ── Headings ─────────────────────────────────────────────── */
+.wordo-editor-surface .ProseMirror h1 {
+  font-size: 26px; font-weight: 700; line-height: 1.25;
+  color: #1a1a2e; margin: 20px 0 8px; border-bottom: 2px solid #e2e8f0;
+  padding-bottom: 6px;
+}
+.wordo-editor-surface .ProseMirror h2 {
+  font-size: 20px; font-weight: 700; line-height: 1.3;
+  color: #1a1a2e; margin: 18px 0 6px;
+}
+.wordo-editor-surface .ProseMirror h3 {
+  font-size: 16px; font-weight: 600; line-height: 1.35;
+  color: #2d3748; margin: 14px 0 4px;
+}
+.wordo-editor-surface .ProseMirror h4 {
+  font-size: 14px; font-weight: 600; color: #4a5568; margin: 12px 0 4px;
+}
+.wordo-editor-surface .ProseMirror h5 {
+  font-size: 13px; font-weight: 600; color: #718096; margin: 10px 0 4px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.wordo-editor-surface .ProseMirror h6 {
+  font-size: 12px; font-weight: 600; color: #a0aec0; margin: 8px 0 4px;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+
+/* ── Paragraphs ───────────────────────────────────────────── */
+.wordo-editor-surface .ProseMirror p {
+  font-size: 14px; line-height: 1.7; margin: 0 0 8px; color: #1a1a1a;
+}
+
+/* ── Lists ────────────────────────────────────────────────── */
+.wordo-editor-surface .ProseMirror ul,
+.wordo-editor-surface .ProseMirror ol {
+  padding-left: 24px; margin: 6px 0 10px;
+}
+.wordo-editor-surface .ProseMirror li {
+  font-size: 14px; line-height: 1.7; margin: 2px 0;
+}
+.wordo-editor-surface .ProseMirror li > p { margin: 0; }
+
+/* ── Blockquote ───────────────────────────────────────────── */
+.wordo-editor-surface .ProseMirror blockquote {
+  border-left: 3px solid #4f8ef7; margin: 10px 0; padding: 4px 12px;
+  background: #f0f5ff; color: #4a5568; font-style: italic;
+}
+
+/* ── Code ─────────────────────────────────────────────────── */
+.wordo-editor-surface .ProseMirror code {
+  background: #f1f1f1; border-radius: 3px; padding: 1px 5px;
+  font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 12.5px;
+}
+
+/* ── Table ────────────────────────────────────────────────── */
+.wordo-editor-surface .ProseMirror table {
+  border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px;
+}
+.wordo-editor-surface .ProseMirror table td,
+.wordo-editor-surface .ProseMirror table th {
+  border: 1px solid #d0d7de; padding: 6px 10px; vertical-align: top;
+  min-width: 40px;
+}
+.wordo-editor-surface .ProseMirror table th {
+  background: #f6f8fa; font-weight: 600; color: #24292f;
+}
+.wordo-editor-surface .ProseMirror table tr:nth-child(even) td {
+  background: #fafafa;
+}
+
+/* ── Horizontal rule ──────────────────────────────────────── */
+.wordo-editor-surface .ProseMirror hr {
+  border: none; border-top: 1px solid #e2e8f0; margin: 16px 0;
+}
+
+/* ── Selection ────────────────────────────────────────────── */
+.wordo-editor-surface .ProseMirror ::selection {
+  background: rgba(79, 142, 247, 0.2);
+}
+
+/* ── Focus ring on active section ────────────────────────── */
+.wordo-page.focused {
+  box-shadow: 0 2px 20px rgba(79, 142, 247, 0.25), 0 2px 12px rgba(0,0,0,0.15);
+}
+
+/* ── Scrollbar ────────────────────────────────────────────── */
+.wordo-canvas::-webkit-scrollbar { width: 8px; }
+.wordo-canvas::-webkit-scrollbar-track { background: #d8d8d8; }
+.wordo-canvas::-webkit-scrollbar-thumb { background: #aaa; border-radius: 4px; }

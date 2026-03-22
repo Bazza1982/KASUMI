@@ -1,3 +1,36 @@
+/* ── KASUMI Design Tokens ─────────────────────────────────────────────────── */
+:root {
+  /* Brand */
+  --kasumi-brand:       #1a1a2e;   /* deep navy — logo / dark surfaces       */
+  --kasumi-brand-mid:   #16213e;   /* mid navy                                */
+  --kasumi-accent:      #4f8ef7;   /* sky blue — primary interactive          */
+  --kasumi-accent-dark: #2563eb;   /* deeper blue — hover / active            */
+
+  /* Shells */
+  --nexcel-primary:     #4f8ef7;   /* Nexcel blue                             */
+  --nexcel-light:       #eff6ff;   /* Nexcel tint                             */
+  --wordo-primary:      #7c3aed;   /* WORDO purple                            */
+  --wordo-light:        #f5f3ff;   /* WORDO tint                              */
+
+  /* Neutrals */
+  --surface:            #ffffff;
+  --surface-alt:        #f8fafc;
+  --border:             #e2e8f0;
+  --text-primary:       #0f172a;
+  --text-secondary:     #64748b;
+  --text-muted:         #94a3b8;
+
+  /* Status */
+  --success:            #10b981;
+  --warning:            #f59e0b;
+  --danger:             #ef4444;
+
+  /* Shadows */
+  --shadow-sm:          0 1px 3px rgba(0,0,0,0.08);
+  --shadow-md:          0 4px 12px rgba(0,0,0,0.12);
+  --shadow-lg:          0 8px 24px rgba(0,0,0,0.18);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -5,10 +38,99 @@
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  color: var(--text-primary);
   overflow: hidden; /* App takes full screen, no global scroll */
 }
 
 .app {
   width: 100vw;
   height: 100vh;
+}
+
+/* ── Kasumi Splash Screen ─────────────────────────────────────────────────── */
+@keyframes kasumi-fade-out {
+  0%   { opacity: 1; }
+  70%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes kasumi-logo-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+
+.kasumi-splash {
+  position: fixed; inset: 0; z-index: 99999;
+  background: var(--kasumi-brand);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px;
+  animation: kasumi-fade-out 1.5s ease forwards;
+  pointer-events: none;
+}
+
+.kasumi-splash__logo {
+  font-size: 40px; font-weight: 800; letter-spacing: 5px;
+  color: #ffffff;
+  animation: kasumi-logo-in 0.45s ease forwards;
+}
+
+.kasumi-splash__logo span {
+  color: var(--kasumi-accent);
+}
+
+.kasumi-splash__sub {
+  font-size: 11px; font-weight: 400; letter-spacing: 4px;
+  color: #8888aa; text-transform: uppercase;
+  animation: kasumi-logo-in 0.45s 0.12s ease both;
+}
+
+.kasumi-splash__bar {
+  width: 48px; height: 3px; border-radius: 2px;
+  background: var(--kasumi-accent); opacity: 0.7;
+  animation: kasumi-logo-in 0.45s 0.24s ease both;
+}
+
+/* ── Shell Switcher ───────────────────────────────────────────────────────── */
+.kasumi-switcher {
+  position: fixed; top: 5px; left: 6px; z-index: 9999;
+  display: flex; align-items: center; gap: 0;
+  background: var(--kasumi-brand); border-radius: 8px;
+  padding: 3px 4px;
+  box-shadow: var(--shadow-md);
+  user-select: none;
+}
+
+.kasumi-switcher__wordmark {
+  font-size: 10px; font-weight: 800; letter-spacing: 2.5px;
+  color: #ffffff; padding: 2px 7px 2px 3px;
+  border-right: 1px solid rgba(255,255,255,0.14);
+  margin-right: 4px;
+}
+
+.kasumi-switcher__wordmark em {
+  color: var(--kasumi-accent); font-style: normal;
+}
+
+.kasumi-switcher__btn {
+  padding: 3px 10px; border-radius: 5px;
+  border: none; cursor: pointer;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
+  transition: background 0.15s, color 0.15s;
+  line-height: 1.5;
+}
+
+.kasumi-switcher__btn--nexcel {
+  background: var(--nexcel-primary); color: #fff;
+}
+
+.kasumi-switcher__btn--wordo {
+  background: var(--wordo-primary); color: #fff;
+}
+
+.kasumi-switcher__btn--inactive {
+  background: transparent; color: #7777aa;
+}
+
+.kasumi-switcher__btn--inactive:hover {
+  background: rgba(255,255,255,0.09); color: #ccccdd;
 }
