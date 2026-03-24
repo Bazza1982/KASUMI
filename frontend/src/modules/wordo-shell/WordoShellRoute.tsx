@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { WordoRibbon } from './components/WordoRibbon'
 import { OutlinePanel } from './components/OutlinePanel'
 import { PageSettingsPanel } from './components/PageSettingsPanel'
@@ -8,21 +8,54 @@ import { SectionEditor } from './editor/SectionEditor'
 import { useWordoStore } from './stores/useWordoStore'
 import { useWordoAccessStore } from './stores/useWordoAccessStore'
 import { useTrackChangeStore } from './stores/useTrackChangeStore'
+import { useCommentStore } from './stores/useCommentStore'
 import { printToPdf } from './services/PdfPrinter'
 import { executeCommand } from './services/CommandExecutor'
+import { addCommentMark, getSelectedText, getSelectionBlockId } from './editor/commentCommands'
+import { acceptInsert, acceptDelete, rejectInsert, rejectDelete } from './editor/trackChangePlugin'
 import { createLogger } from './editor/logger'
 
 const log = createLogger('WordoShellRoute')
 
+// Simple inline comment prompt — no extra dependency
+function promptComment(anchorText: string): string | null {
+  return window.prompt(`Add comment to: "${anchorText.slice(0, 50)}${anchorText.length > 50 ? '…' : ''}"`)
+}
+
 export const WordoShellRoute: React.FC = () => {
-  const { document: doc, orchestrator, insertNexcelEmbed, loadFromImport, saveNow, triggerAutoSave } = useWordoStore()
+  const { document: doc, orchestrator, insertNexcelEmbed, loadFromImport, saveNow, triggerAutoSave, focusedSectionId } = useWordoStore()
   const access = useWordoAccessStore()
-  const [showPageSettings, setShowPageSettings]   = useState(false)
-  const [showNexcelDialog, setShowNexcelDialog]   = useState(false)
-  const [exporting, setExporting]                 = useState(false)
-  const [importing, setImporting]                 = useState(false)
-  const [importWarnings, setImportWarnings]        = useState<string[]>([])
+  const trackChange = useTrackChangeStore()
+  const commentStore = useCommentStore()
+
+  const [showPageSettings, setShowPageSettings] = useState(false)
+  const [showNexcelDialog, setShowNexcelDialog] = useState(false)
+  const [showCommentPanel, setShowCommentPanel] = useState(false)
+  const [exporting, setExporting]              = useState(false)
+  const [importing, setImporting]              = useState(false)
+  const [importWarnings, setImportWarnings]    = useState<string[]>([])
+  const [saveStatus, setSaveStatus]            = useState<'idle' | 'saved' | 'error'>('idle')
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ── Save ──────────────────────────────────────────────────
+  const handleSave = useCallback(() => {
+    const ok = saveNow()
+    setSaveStatus(ok ? 'saved' : 'error')
+    setTimeout(() => setSaveStatus('idle'), 2000)
+    log.info('manual-save', { ok })
+  }, [saveNow])
+
+  // Ctrl+S shortcut
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault()
+        handleSave()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [handleSave])
 
   // ── Export .docx ──────────────────────────────────────────
   const handleExportDocx = useCallback(async () => {
@@ -49,8 +82,7 @@ export const WordoShellRoute: React.FC = () => {
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    e.target.value = ''   // allow re-selecting same file
-
+    e.target.value = ''
     setImporting(true)
     setImportWarnings([])
     try {
@@ -66,10 +98,76 @@ export const WordoShellRoute: React.FC = () => {
     }
   }, [loadFromImport])
 
-  const trackChangeStore = useTrackChangeStore()
-  const [showCommentPanel, setShowCommentPanel] = useState(false)
+  // ── Add Comment ───────────────────────────────────────────
+  const handleAddComment = useCallback(() => {
+    if (!focusedSectionId) {
+      alert('Click inside the document first, then select text to comment on.')
+      return
+    }
+    const inst = orchestrator.getSection(focusedSectionId)
+    if (!inst) return
 
-  // ── Register command bus handler ──────────────────────────
+    const selectedText = getSelectedText(inst.state)
+    if (!selectedText.trim()) {
+      alert('Select some text first, then click Comment.')
+      return
+    }
+
+    const commentText = promptComment(selectedText)
+    if (!commentText?.trim()) return
+
+    const blockId = getSelectionBlockId(inst.state) ?? ''
+    const commentId = commentStore.addComment({
+      sectionId: focusedSectionId,
+      anchorBlockId: blockId,
+      anchorText: selectedText,
+      author: 'user',
+      text: commentText.trim(),
+    })
+
+    const tr = addCommentMark(inst.state, commentId)
+    if (tr) orchestrator.applyTransaction(focusedSectionId, tr)
+
+    setShowCommentPanel(true)
+    log.info('comment-added-via-ui', { commentId, sectionId: focusedSectionId })
+  }, [focusedSectionId, orchestrator, commentStore])
+
+  // ── Accept / Reject all track changes ────────────────────
+  const handleAcceptAll = useCallback(() => {
+    const changes = trackChange.getAllChanges()
+    if (changes.length === 0) return
+    changes.forEach(change => {
+      const inst = orchestrator.getSection(change.sectionId || (doc.sections[0]?.id ?? ''))
+      if (!inst) return
+      const tr = change.type === 'insert'
+        ? acceptInsert(inst.state, change.changeId)
+        : acceptDelete(inst.state, change.changeId)
+      if (tr) {
+        orchestrator.applyTransaction(inst.sectionId, tr)
+        trackChange.removeChange(change.changeId)
+      }
+    })
+    log.info('accept-all', { count: changes.length })
+  }, [orchestrator, trackChange, doc.sections])
+
+  const handleRejectAll = useCallback(() => {
+    const changes = trackChange.getAllChanges()
+    if (changes.length === 0) return
+    changes.forEach(change => {
+      const inst = orchestrator.getSection(change.sectionId || (doc.sections[0]?.id ?? ''))
+      if (!inst) return
+      const tr = change.type === 'insert'
+        ? rejectInsert(inst.state, change.changeId)
+        : rejectDelete(inst.state, change.changeId)
+      if (tr) {
+        orchestrator.applyTransaction(inst.sectionId, tr)
+        trackChange.removeChange(change.changeId)
+      }
+    })
+    log.info('reject-all', { count: changes.length })
+  }, [orchestrator, trackChange, doc.sections])
+
+  // ── Register command bus ──────────────────────────────────
   useEffect(() => {
     import('../../platform/command-bus').then(({ commandBus: bus }) => {
       bus.register('wordo', async (cmd) => {
@@ -83,12 +181,16 @@ export const WordoShellRoute: React.FC = () => {
     }
   }, [orchestrator])
 
-  // ── Auto-save: trigger on orchestrator changes ────────────
+  // ── Auto-save on doc changes ──────────────────────────────
   useEffect(() => {
     return orchestrator.subscribe(() => {
       triggerAutoSave()
     })
   }, [orchestrator, triggerAutoSave])
+
+  // ── Derived counts ────────────────────────────────────────
+  const openCommentCount = commentStore.getAllComments().filter(c => c.status === 'open').length
+  const pendingChangeCount = trackChange.getAllChanges().length
 
   const WORDO_MENUS = ['File', 'Home', 'Insert', 'Draw', 'Design', 'Layout', 'References', 'Mailings', 'Review', 'View', 'Help']
   const [activeMenu, setActiveMenu] = useState('Home')
@@ -115,15 +217,24 @@ export const WordoShellRoute: React.FC = () => {
           >{m}</button>
         ))}
       </div>
+
       <WordoRibbon
         onPageSettings={() => setShowPageSettings(v => !v)}
         onInsertNexcel={() => setShowNexcelDialog(true)}
         onExportDocx={handleExportDocx}
         onExportPdf={handleExportPdf}
         onImportDocx={handleImportClick}
+        onAddComment={handleAddComment}
+        onToggleCommentPanel={() => setShowCommentPanel(v => !v)}
+        onAcceptAllChanges={handleAcceptAll}
+        onRejectAllChanges={handleRejectAll}
+        onSave={handleSave}
+        showCommentPanel={showCommentPanel}
+        openCommentCount={openCommentCount}
+        pendingChangeCount={pendingChangeCount}
       />
 
-      {/* Hidden file input for .docx import */}
+      {/* Hidden file input */}
       <input
         ref={fileInputRef}
         type="file"
@@ -132,7 +243,7 @@ export const WordoShellRoute: React.FC = () => {
         onChange={handleFileChange}
       />
 
-      {/* Import warnings toast */}
+      {/* Import warnings */}
       {importWarnings.length > 0 && (
         <div style={{
           background: '#fffbeb', borderBottom: '1px solid #f59e0b',
@@ -148,6 +259,7 @@ export const WordoShellRoute: React.FC = () => {
         </div>
       )}
 
+      {/* Main content area */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         <OutlinePanel />
 
@@ -168,6 +280,11 @@ export const WordoShellRoute: React.FC = () => {
             />
           ))}
         </div>
+
+        {/* Comment panel — slides in on the right */}
+        {showCommentPanel && (
+          <CommentPanel currentUser="user" />
+        )}
       </div>
 
       {/* Status bar */}
@@ -177,7 +294,6 @@ export const WordoShellRoute: React.FC = () => {
         display: 'flex', alignItems: 'center', padding: '0 10px',
         fontSize: 12, flexShrink: 0, userSelect: 'none',
       }}>
-        {/* Left — document info */}
         <span style={{ display: 'flex', gap: 10, alignItems: 'center', flex: 1 }}>
           <span>Page <strong>1</strong> of {doc.sections.length}</span>
           <span style={{ color: '#aaa' }}>|</span>
@@ -192,16 +308,45 @@ export const WordoShellRoute: React.FC = () => {
             background: access.mode === 'admin' ? '#fef3c7' : access.mode === 'analyst' ? '#dbeafe' : '#dcfce7',
             color:      access.mode === 'admin' ? '#92400e' : access.mode === 'analyst' ? '#1e40af' : '#15803d',
           }}>{access.mode.toUpperCase()}</span>
+
+          {/* Track change indicator */}
+          {trackChange.enabled && (
+            <><span style={{ color: '#aaa' }}>|</span>
+            <span style={{ color: '#dc2626', fontWeight: 600, fontSize: 11 }}>
+              🔴 Tracking {pendingChangeCount > 0 ? `· ${pendingChangeCount} pending` : ''}
+            </span></>
+          )}
+
+          {/* Comment indicator */}
+          {openCommentCount > 0 && (
+            <><span style={{ color: '#aaa' }}>|</span>
+            <span
+              style={{ color: '#d97706', cursor: 'pointer', fontSize: 11 }}
+              onClick={() => setShowCommentPanel(v => !v)}
+            >
+              💬 {openCommentCount} comment{openCommentCount !== 1 ? 's' : ''}
+            </span></>
+          )}
+
+          {/* Save status */}
+          {saveStatus === 'saved' && (
+            <><span style={{ color: '#aaa' }}>|</span>
+            <span style={{ color: '#15803d', fontSize: 11 }}>✓ Saved</span></>
+          )}
+          {saveStatus === 'error' && (
+            <><span style={{ color: '#aaa' }}>|</span>
+            <span style={{ color: '#dc2626', fontSize: 11 }}>✕ Save failed</span></>
+          )}
+
           {importing && <><span style={{ color: '#aaa' }}>|</span><span style={{ color: '#0891b2' }}>Importing…</span></>}
           {exporting && <><span style={{ color: '#aaa' }}>|</span><span style={{ color: '#f59e0b' }}>Exporting…</span></>}
         </span>
 
-        {/* Right — view icons + zoom */}
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           {([
-            { key: 'read',   label: '📖', title: 'Read Mode' },
-            { key: 'print',  label: '⊟',  title: 'Print Layout' },
-            { key: 'web',    label: '🌐', title: 'Web Layout' },
+            { key: 'read',  label: '📖', title: 'Read Mode' },
+            { key: 'print', label: '⊟',  title: 'Print Layout' },
+            { key: 'web',   label: '🌐', title: 'Web Layout' },
           ] as const).map(v => (
             <button key={v.key} title={v.title} style={{
               background: v.key === 'print' ? '#e0e0e0' : 'none',
