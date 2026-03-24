@@ -10,6 +10,7 @@ export interface ContextMenuProps {
   type: 'cell' | 'row' | 'column'
   target: { rowId?: number; fieldId?: number; rowIndex?: number; colIndex?: number }
   onClose: () => void
+  onViewCellHistory?: (cellRef: string) => void
 }
 
 interface MenuItem {
@@ -18,7 +19,7 @@ interface MenuItem {
   shortcut?: string
 }
 
-const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, type, target, onClose }) => {
+const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, type, target, onClose, onViewCellHistory }) => {
   const { insertRowAt, deleteSelectedRows, toggleSort, toggleHideColumn } = useExcelStore()
   const { addComment } = useCommentStore()
   const { clearFormat } = useCellFormatStore()
@@ -67,6 +68,7 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, type, target, onClose }
         'separator',
         { label: 'Add Comment', action: handleAddComment },
         { label: 'View Comments', action: () => onClose() },
+        { label: 'View Cell History', action: () => { if (cellRef && onViewCellHistory) onViewCellHistory(cellRef); onClose() } },
         'separator',
         { label: 'Clear Formatting', action: () => { if (cellRef) clearFormat(cellRef); onClose() } },
       ]

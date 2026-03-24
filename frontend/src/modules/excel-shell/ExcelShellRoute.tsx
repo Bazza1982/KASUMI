@@ -11,6 +11,8 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { useCommentStore } from './stores/useCommentStore'
 import { useCellFormatStore } from './stores/useCellFormatStore'
 import { useExcelStore } from './stores/useExcelStore'
+import { useCellChangeStore } from './stores/useCellChangeStore'
+import { nexcelAIContext } from './services/AIContextSerializer'
 
 const ExcelShellRoute = () => {
   const [showHelp, setShowHelp] = useState(false)
@@ -18,12 +20,14 @@ const ExcelShellRoute = () => {
 
   const { load: loadComments } = useCommentStore()
   const { load: loadFormats, setFormatRange } = useCellFormatStore()
+  const { load: loadChanges } = useCellChangeStore()
   const { sheet, selection } = useExcelStore()
 
   // Load persisted data on mount
   useEffect(() => {
     loadComments()
     loadFormats()
+    loadChanges()
   }, [])
 
   // Helper: convert current selection to cellRef strings
@@ -63,6 +67,13 @@ const ExcelShellRoute = () => {
       }
       if (e.key === 'Escape' && showHelp) {
         setShowHelp(false)
+      }
+      // Dev utility: Ctrl+Shift+D exports AI context to console
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'D') {
+        e.preventDefault()
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[NEXCEL:AIContext] exportForAI:', nexcelAIContext.exportForAI())
+        }
       }
     }
     window.addEventListener('keydown', handler)

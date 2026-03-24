@@ -6,6 +6,31 @@ import { useCommentStore } from '../stores/useCommentStore'
 import { renderCellValue, getSelectOptionStyle } from './renderers'
 import type { FieldMeta, GridCoord, SelectOption } from '../types'
 import { NexcelLogger } from '../services/logger'
+import CellHistoryPanel from '../components/CellHistoryPanel'
+
+// ── Duration helper ───────────────────────────────────────────────────────────
+
+function parseDuration(input: string): number {
+  const s = input.trim().toLowerCase()
+  // "1:30:00" or "30:00" or "90:00"
+  if (/^\d+:\d{2}(:\d{2})?$/.test(s)) {
+    const parts = s.split(':').map(Number)
+    if (parts.length === 3) return (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0)
+    return (parts[0] || 0) * 60 + (parts[1] || 0)
+  }
+  // "2h30m", "90m", "45s", "1h", "2h 30m 10s"
+  let total = 0
+  const hMatch = s.match(/(\d+(?:\.\d+)?)\s*h/)
+  const mMatch = s.match(/(\d+(?:\.\d+)?)\s*m/)
+  const sMatch = s.match(/(\d+(?:\.\d+)?)\s*s/)
+  if (hMatch) total += parseFloat(hMatch[1]) * 3600
+  if (mMatch) total += parseFloat(mMatch[1]) * 60
+  if (sMatch) total += parseFloat(sMatch[1])
+  if (total > 0) return Math.round(total)
+  // Fallback: plain number is seconds
+  const n = parseFloat(s)
+  return isNaN(n) ? 0 : Math.round(n)
+}
 
 const ROW_HEADER_WIDTH = 50
 const COL_HEADER_HEIGHT = 44
@@ -232,6 +257,47 @@ function CellContent({
         />
       )
     }
+    if (field?.type === 'duration') {
+      return (
+        <input
+          autoFocus
+          placeholder="e.g. 2h30m or 1:30:00"
+          style={{ width: '100%', height: '100%', border: 'none', outline: 'none', padding: '0 4px', fontFamily: 'inherit', fontSize: '13px' }}
+          value={editValue}
+          onChange={e => setEditValue(e.target.value)}
+          onBlur={() => {
+            // Parse duration on blur and commit
+            const seconds = parseDuration(editValue)
+            const { activeCell: ac } = useExcelStore.getState()
+            if (ac && field) {
+              useExcelStore.getState().commitCellByField(ac.rowIndex, field.id, seconds)
+            }
+          }}
+          onPointerDown={e => e.stopPropagation()}
+        />
+      )
+    }
+    if (field?.type === 'rating') {
+      const rawRating = sheet?.rows[rowIndex]?.fields[field.id]
+      const currentRating = typeof rawRating === 'number' ? rawRating : parseInt(String(rawRating ?? 0), 10)
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', padding: '0 4px', gap: 2 }}>
+          {[1, 2, 3, 4, 5].map(star => (
+            <span
+              key={star}
+              style={{ fontSize: '16px', cursor: 'pointer', color: star <= currentRating ? '#f59e0b' : '#ddd', lineHeight: 1, userSelect: 'none' }}
+              onMouseDown={e => {
+                e.preventDefault()
+                e.stopPropagation()
+                useExcelStore.getState().commitCellByField(rowIndex, field.id, star)
+              }}
+            >
+              {star <= currentRating ? '★' : '☆'}
+            </span>
+          ))}
+        </div>
+      )
+    }
     return (
       <input
         autoFocus
@@ -284,6 +350,45 @@ function CellContent({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
         <span style={{ fontSize: '16px', color: raw ? '#217346' : '#ccc' }}>{raw ? '☑' : '☐'}</span>
       </div>
+    )
+  }
+
+  if (field.type === 'link_row') {
+    const links = Array.isArray(raw) ? raw as Array<{ id?: number; value?: string }> : []
+    if (!links.length) return <span style={{ padding: '0 4px', fontSize: '13px' }} />
+    return (
+      <div style={{ padding: '0 4px', display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'nowrap', overflow: 'hidden' }}>
+        {links.map((l, i) => (
+          <span
+            key={l.id ?? i}
+            style={{
+              backgroundColor: '#e8eaf6',
+              borderRadius: 10,
+              padding: '1px 7px',
+              fontSize: '11px',
+              color: '#3949ab',
+              whiteSpace: 'nowrap',
+              maxWidth: 80,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              flexShrink: 0,
+            }}
+          >
+            {l.value || String(l.id || '')}
+          </span>
+        ))}
+      </div>
+    )
+  }
+
+  if (field.type === 'rating') {
+    const n = typeof raw === 'number' ? raw : parseInt(String(raw ?? 0), 10)
+    const clamped = Math.max(0, Math.min(5, isNaN(n) ? 0 : Math.round(n)))
+    return (
+      <span style={{ padding: '0 4px', fontSize: '14px', letterSpacing: '1px', color: '#f59e0b' }}>
+        {'★'.repeat(clamped)}
+        <span style={{ color: '#ddd' }}>{'☆'.repeat(5 - clamped)}</span>
+      </span>
     )
   }
 
@@ -344,6 +449,9 @@ const VirtualGrid = () => {
     rowIndex: number
     colIndex: number
   } | null>(null)
+
+  // Cell history panel
+  const [historyCellRef, setHistoryCellRef] = useState<string | null>(null)
 
   // Column header context menu
   const [colHeaderCtxMenu, setColHeaderCtxMenu] = useState<{
@@ -1316,6 +1424,18 @@ const VirtualGrid = () => {
             { label: 'Insert Row Below', action: () => { insertRowAt(contextMenu.rowIndex + 1); setContextMenu(null) } },
             { label: 'Delete Row(s)', action: () => { deleteSelectedRows(); setContextMenu(null) } },
             { label: 'separator' },
+            {
+              label: 'View Cell History',
+              action: () => {
+                const row = sheet?.rows[contextMenu.rowIndex]
+                const field = visibleFields[contextMenu.colIndex]
+                if (row && field) {
+                  setHistoryCellRef(`${row.id}:${field.id}`)
+                }
+                setContextMenu(null)
+              },
+            },
+            { label: 'separator' },
             { label: 'Clear Cell(s)', action: () => {
               const { selection: sel } = useExcelStore.getState()
               if (sel) {
@@ -1355,6 +1475,14 @@ const VirtualGrid = () => {
               )
           )}
         </div>
+      )}
+
+      {/* Cell History Panel */}
+      {historyCellRef && (
+        <CellHistoryPanel
+          cellRef={historyCellRef}
+          onClose={() => setHistoryCellRef(null)}
+        />
       )}
 
       {/* Column header context menu */}

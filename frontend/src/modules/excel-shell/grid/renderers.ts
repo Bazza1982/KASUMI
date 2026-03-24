@@ -49,9 +49,42 @@ export function renderCellValue(value: unknown, field: FieldMeta): string {
     }
 
     case 'link_row': {
-      const links = value as Array<{ value?: string }> | null
+      const links = value as Array<{ id?: number; value?: string }> | null
       if (!links || !links.length) return ''
-      return links.map(l => l.value || '').join(', ')
+      return links.map(l => l.value || String(l.id || '')).filter(Boolean).join(', ')
+    }
+
+    case 'duration': {
+      // Value may be seconds (number) or "H:MM:SS" string
+      let totalSeconds: number
+      if (typeof value === 'number') {
+        totalSeconds = Math.round(value)
+      } else {
+        const str = String(value)
+        // Try parsing H:MM:SS or MM:SS
+        const parts = str.split(':').map(Number)
+        if (parts.length === 3) {
+          totalSeconds = (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0)
+        } else if (parts.length === 2) {
+          totalSeconds = (parts[0] || 0) * 60 + (parts[1] || 0)
+        } else {
+          totalSeconds = parseInt(str, 10) || 0
+        }
+      }
+      if (isNaN(totalSeconds)) return String(value)
+      const h = Math.floor(totalSeconds / 3600)
+      const m = Math.floor((totalSeconds % 3600) / 60)
+      const s = totalSeconds % 60
+      if (h > 0) return s > 0 ? `${h}h ${m}m ${s}s` : `${h}h ${m}m`
+      if (m > 0) return s > 0 ? `${m}m ${s}s` : `${m}m`
+      return `${s}s`
+    }
+
+    case 'rating': {
+      const n = typeof value === 'number' ? value : parseInt(String(value), 10)
+      if (isNaN(n)) return ''
+      const clamped = Math.max(0, Math.min(5, Math.round(n)))
+      return '★'.repeat(clamped) + '☆'.repeat(5 - clamped)
     }
 
     default:

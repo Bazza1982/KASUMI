@@ -5,6 +5,7 @@ import { BaserowAdapter } from '../adapters/baserow/BaserowAdapter'
 import { renderCellValue } from '../grid/renderers'
 import { objectRegistry, makeObjectId } from '../../../platform/object-registry'
 import { NexcelLogger } from '../services/logger'
+import { useCellChangeStore } from './useCellChangeStore'
 
 // Adapter selection — reads from localStorage so ConnectionPanel can switch at runtime
 const _useMock = typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_use_mock') !== 'false' : true
@@ -310,6 +311,16 @@ export const useExcelStore = create<ExcelState>((set, get) => {
       const row = sheet.rows[rowIndex]
       if (!field || !row) return
 
+      const oldValue = row.fields[field.id]
+      useCellChangeStore.getState().recordChange({
+        cellRef: `${row.id}:${field.id}`,
+        fieldId: field.id,
+        rowId: row.id,
+        oldValue,
+        newValue: rawValue,
+        source: 'user_edit',
+      })
+
       pushUndo()
 
       // Optimistic update in sheet.rows
@@ -367,6 +378,15 @@ export const useExcelStore = create<ExcelState>((set, get) => {
           const row = sheet.rows[rIdx]
           if (!field || !row || field.readOnly) continue
           const val = data[rOff][cOff].trim()
+          const oldValue = row.fields[field.id]
+          useCellChangeStore.getState().recordChange({
+            cellRef: `${row.id}:${field.id}`,
+            fieldId: field.id,
+            rowId: row.id,
+            oldValue,
+            newValue: val,
+            source: 'paste',
+          })
           newRows[rIdx] = { ...row, fields: { ...row.fields, [field.id]: val } }
           updates.push({ rowId: row.id, fieldId: field.id, value: val })
         }
@@ -715,6 +735,15 @@ export const useExcelStore = create<ExcelState>((set, get) => {
             } else {
               fillVal = srcVals[offset % srcHeight]
             }
+            const oldVal = row.fields[field.id]
+            useCellChangeStore.getState().recordChange({
+              cellRef: `${row.id}:${field.id}`,
+              fieldId: field.id,
+              rowId: row.id,
+              oldValue: oldVal,
+              newValue: fillVal,
+              source: 'fill',
+            })
             newRows[r] = { ...row, fields: { ...row.fields, [field.id]: fillVal } }
             updates.push({ rowId: row.id, fieldId: field.id, value: fillVal })
           }
@@ -734,6 +763,15 @@ export const useExcelStore = create<ExcelState>((set, get) => {
             if (!field || field.readOnly) continue
             const offset = c - srcEndCol - 1
             const fillVal = srcVals[offset % srcWidth]
+            const oldVal = newRows[r].fields[field.id]
+            useCellChangeStore.getState().recordChange({
+              cellRef: `${srcRow.id}:${field.id}`,
+              fieldId: field.id,
+              rowId: srcRow.id,
+              oldValue: oldVal,
+              newValue: fillVal,
+              source: 'fill',
+            })
             newRows[r] = { ...newRows[r], fields: { ...newRows[r].fields, [field.id]: fillVal } }
             updates.push({ rowId: srcRow.id, fieldId: field.id, value: fillVal })
           }
@@ -796,6 +834,16 @@ export const useExcelStore = create<ExcelState>((set, get) => {
       const field = sheet.fields.find(f => f.id === fieldId)
       const row = sheet.rows[rowIndex]
       if (!field || !row || field.readOnly) return
+
+      const oldValue = row.fields[field.id]
+      useCellChangeStore.getState().recordChange({
+        cellRef: `${row.id}:${field.id}`,
+        fieldId: field.id,
+        rowId: row.id,
+        oldValue,
+        newValue: rawValue,
+        source: 'user_edit',
+      })
 
       pushUndo()
 
