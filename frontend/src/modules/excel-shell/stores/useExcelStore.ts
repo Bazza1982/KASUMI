@@ -1,9 +1,10 @@
 import { create } from 'zustand'
-import type { GridCoord, SelectionRange, SheetContext, FieldMeta, RowRecord, TableMeta } from '../types'
+import type { GridCoord, SelectionRange, SheetContext, FieldMeta, RowRecord, TableMeta, FilterRule } from '../types'
 import { MockAdapter } from '../adapters/baserow/MockAdapter'
 import { BaserowAdapter } from '../adapters/baserow/BaserowAdapter'
 import { renderCellValue } from '../grid/renderers'
 import { objectRegistry, makeObjectId } from '../../../platform/object-registry'
+import { NexcelLogger } from '../services/logger'
 
 // Adapter selection — reads from localStorage so ConnectionPanel can switch at runtime
 const _useMock = typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_use_mock') !== 'false' : true
@@ -66,6 +67,11 @@ interface ExcelState {
   // ── Search / filter ───────────────────────────────
   searchText: string
   setSearchText: (text: string) => void
+  columnFilters: Record<number, FilterRule>
+  setColumnFilter: (fieldId: number, rule: FilterRule | null) => void
+
+  // ── All rows (unfiltered original) ────────────────
+  allRows: RowRecord[]
 
   // ── Sort ──────────────────────────────────────────
   toggleSort: (fieldIndex: number) => void
@@ -113,6 +119,83 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     set({ undoStack: [...undoStack.slice(-49), [...sheet.rows]], redoStack: [] })
   }
 
+  // Apply column filters, search text, and sort to allRows → sheet.rows
+  const applyFiltersAndSort = () => {
+    const { sheet, allRows, searchText, columnFilters, sortConfig } = get()
+    if (!sheet) return
+
+    NexcelLogger.filter('debug', 'applyFiltersAndSort', {
+      totalRows: allRows.length,
+      activeFilters: Object.keys(columnFilters).length,
+      searchText,
+      sortConfig,
+    })
+
+    let rows = [...allRows]
+
+    // Apply column filters
+    const activeFilters = Object.entries(columnFilters)
+    if (activeFilters.length > 0) {
+      rows = rows.filter(row => {
+        return activeFilters.every(([fieldIdStr, rule]) => {
+          const fieldId = parseInt(fieldIdStr, 10)
+          const field = sheet.fields.find(f => f.id === fieldId)
+          if (!field) return true
+          const raw = row.fields[fieldId]
+          const strVal = renderCellValue(raw, field).toLowerCase()
+          const ruleVal = rule.value.toLowerCase()
+          switch (rule.type) {
+            case 'contains': return strVal.includes(ruleVal)
+            case 'equals': return strVal === ruleVal
+            case 'is_empty': return strVal === ''
+            case 'not_empty': return strVal !== ''
+            case 'gt': return parseFloat(strVal) > parseFloat(ruleVal)
+            case 'lt': return parseFloat(strVal) < parseFloat(ruleVal)
+            default: return true
+          }
+        })
+      })
+    }
+
+    // Apply search text
+    if (searchText.trim()) {
+      const q = searchText.toLowerCase()
+      rows = rows.filter(row =>
+        sheet.fields.some(field => {
+          const val = renderCellValue(row.fields[field.id] ?? '', field)
+          return val.toLowerCase().includes(q)
+        })
+      )
+    }
+
+    // Apply sort
+    if (sortConfig !== null) {
+      const field = sheet.fields[sortConfig.fieldIndex]
+      if (field) {
+        rows = rows.sort((a, b) => {
+          const valA = a.fields[field.id]
+          const valB = b.fields[field.id]
+          let cmp = 0
+          if (field.type === 'number' || field.type === 'rating' || field.type === 'autonumber') {
+            cmp = (parseFloat(String(valA ?? 0)) || 0) - (parseFloat(String(valB ?? 0)) || 0)
+          } else if (field.type === 'date' || field.type === 'created_on' || field.type === 'last_modified') {
+            cmp = Date.parse(String(valA ?? '')) - Date.parse(String(valB ?? ''))
+          } else if (field.type === 'boolean') {
+            cmp = (valA ? 1 : 0) - (valB ? 1 : 0)
+          } else {
+            const sa = renderCellValue(valA, field)
+            const sb = renderCellValue(valB, field)
+            cmp = sa.localeCompare(sb, undefined, { numeric: true, sensitivity: 'base' })
+          }
+          return sortConfig.direction === 'asc' ? cmp : -cmp
+        })
+      }
+    }
+
+    NexcelLogger.filter('info', 'filtered', { resultRows: rows.length })
+    set({ sheet: { ...sheet, rows } })
+  }
+
   return {
     tables: [],
     activeTableId: null,
@@ -125,6 +208,8 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     statusText: 'Ready',
     searchText: '',
     sortConfig: null,
+    columnFilters: {},
+    allRows: [],
     undoStack: [],
     redoStack: [],
     frozenColCount: 0,
@@ -158,6 +243,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
           adapter.getRows(tableId, null, 1, 200),
         ])
         const tableName = get().tables.find(t => t.id === tableId)?.name ?? `Table ${tableId}`
+        NexcelLogger.store('info', 'loadSheet', { tableId, rows: rowsResult.total })
         set({
           sheet: {
             tableId,
@@ -169,6 +255,8 @@ export const useExcelStore = create<ExcelState>((set, get) => {
             isLoading: false,
             error: null,
           },
+          allRows: rowsResult.rows,
+          columnFilters: {},
           statusText: `${rowsResult.total} rows`,
           undoStack: [],
           redoStack: [],
@@ -216,7 +304,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     // ── Data mutations ────────────────────────────────
 
     commitCell: async (rowIndex: number, colIndex: number, rawValue: unknown) => {
-      const { sheet } = get()
+      const { sheet, allRows } = get()
       if (!sheet) return
       const field = sheet.fields[colIndex]
       const row = sheet.rows[rowIndex]
@@ -224,10 +312,12 @@ export const useExcelStore = create<ExcelState>((set, get) => {
 
       pushUndo()
 
-      // Optimistic update
+      // Optimistic update in sheet.rows
       const newRows = [...sheet.rows]
       newRows[rowIndex] = { ...row, fields: { ...row.fields, [field.id]: rawValue } }
-      set({ sheet: { ...sheet, rows: newRows } })
+      // Sync to allRows
+      const newAllRows = allRows.map(r => r.id === row.id ? { ...r, fields: { ...r.fields, [field.id]: rawValue } } : r)
+      set({ sheet: { ...sheet, rows: newRows }, allRows: newAllRows })
 
       try {
         await adapter.updateCell(sheet.tableId, row.id, field.id, rawValue)
@@ -291,68 +381,106 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     // ── Row mutations ─────────────────────────────────
 
     addRow: async () => {
-      const { sheet } = get()
+      const { sheet, allRows } = get()
       if (!sheet) return
 
       pushUndo()
 
-      const newId = Math.max(...sheet.rows.map(r => r.id), 0) + 1
+      const newId = Math.max(...allRows.map(r => r.id), 0) + 1
       const newRow: RowRecord = {
         id: newId,
-        order: `${sheet.rows.length + 1}.00000000000000000000`,
+        order: `${allRows.length + 1}.00000000000000000000`,
         fields: {},
       }
-      const newRows = [...sheet.rows, newRow]
-      set({ sheet: { ...sheet, rows: newRows, totalCount: sheet.totalCount + 1 } })
+      const newAllRows = [...allRows, newRow]
+      NexcelLogger.store('info', 'addRow', { newId })
+      set({ allRows: newAllRows })
+      applyFiltersAndSort()
+      set(s => ({ sheet: s.sheet ? { ...s.sheet, totalCount: s.sheet.totalCount + 1 } : null }))
     },
 
     deleteSelectedRows: async () => {
-      const { sheet, selection } = get()
+      const { sheet, allRows, selection } = get()
       if (!sheet || !selection) return
 
       pushUndo()
 
       const minRow = Math.min(selection.startRow, selection.endRow)
       const maxRow = Math.max(selection.startRow, selection.endRow)
-      const newRows = sheet.rows.filter((_, i) => i < minRow || i > maxRow)
-      const deletedCount = maxRow - minRow + 1
-      set({
-        sheet: { ...sheet, rows: newRows, totalCount: sheet.totalCount - deletedCount },
-        activeCell: { rowIndex: Math.min(minRow, Math.max(0, newRows.length - 1)), colIndex: selection.startCol },
+      // Get IDs of rows to delete from the current filtered view
+      const idsToDelete = new Set(
+        sheet.rows.slice(minRow, maxRow + 1).map(r => r.id)
+      )
+      const newAllRows = allRows.filter(r => !idsToDelete.has(r.id))
+      const deletedCount = idsToDelete.size
+      NexcelLogger.store('info', 'deleteSelectedRows', { deletedCount })
+      set({ allRows: newAllRows })
+      applyFiltersAndSort()
+      set(s => ({
+        sheet: s.sheet ? { ...s.sheet, totalCount: s.sheet.totalCount - deletedCount } : null,
+        activeCell: { rowIndex: Math.min(minRow, Math.max(0, newAllRows.length - 1)), colIndex: selection.startCol },
         selection: null,
-      })
+      }))
     },
 
     insertRowAt: async (index: number) => {
-      const { sheet } = get()
+      const { sheet, allRows } = get()
       if (!sheet) return
 
       pushUndo()
 
-      const newId = Math.max(...sheet.rows.map(r => r.id), 0) + 1
+      const newId = Math.max(...allRows.map(r => r.id), 0) + 1
       const newRow: RowRecord = { id: newId, order: `${newId}.00`, fields: {} }
-      const newRows = [...sheet.rows]
-      newRows.splice(index, 0, newRow)
-      set({ sheet: { ...sheet, rows: newRows, totalCount: sheet.totalCount + 1 } })
+      // Insert into allRows at the corresponding position in the filtered view
+      const refRow = sheet.rows[index]
+      const allRowsIndex = refRow ? allRows.findIndex(r => r.id === refRow.id) : allRows.length
+      const newAllRows = [...allRows]
+      newAllRows.splice(allRowsIndex, 0, newRow)
+      NexcelLogger.store('info', 'insertRowAt', { index, newId })
+      set({ allRows: newAllRows })
+      applyFiltersAndSort()
+      set(s => ({ sheet: s.sheet ? { ...s.sheet, totalCount: s.sheet.totalCount + 1 } : null }))
     },
 
     // ── Search / filter ───────────────────────────────
 
-    setSearchText: (text) => set({ searchText: text }),
+    setSearchText: (text) => {
+      NexcelLogger.filter('debug', 'setSearchText', { text })
+      set({ searchText: text })
+      applyFiltersAndSort()
+    },
+
+    setColumnFilter: (fieldId, rule) => {
+      const { columnFilters } = get()
+      if (rule === null) {
+        const updated = { ...columnFilters }
+        delete updated[fieldId]
+        NexcelLogger.filter('info', 'clearColumnFilter', { fieldId })
+        set({ columnFilters: updated })
+      } else {
+        NexcelLogger.filter('info', 'setColumnFilter', { fieldId, rule })
+        set({ columnFilters: { ...columnFilters, [fieldId]: rule } })
+      }
+      applyFiltersAndSort()
+    },
 
     // ── Sort ──────────────────────────────────────────
 
     toggleSort: (fieldIndex) => {
       const { sortConfig } = get()
+      let newSortConfig: typeof sortConfig
       if (sortConfig?.fieldIndex === fieldIndex) {
         if (sortConfig.direction === 'asc') {
-          set({ sortConfig: { fieldIndex, direction: 'desc' } })
+          newSortConfig = { fieldIndex, direction: 'desc' }
         } else {
-          set({ sortConfig: null })
+          newSortConfig = null
         }
       } else {
-        set({ sortConfig: { fieldIndex, direction: 'asc' } })
+        newSortConfig = { fieldIndex, direction: 'asc' }
       }
+      NexcelLogger.filter('debug', 'toggleSort', { fieldIndex, newSortConfig })
+      set({ sortConfig: newSortConfig })
+      applyFiltersAndSort()
     },
 
     // ── Undo / Redo ───────────────────────────────────
@@ -663,7 +791,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     getRowAt: (rowIndex) => get().sheet?.rows[rowIndex] ?? null,
 
     commitCellByField: async (rowIndex: number, fieldId: number, rawValue: unknown) => {
-      const { sheet } = get()
+      const { sheet, allRows } = get()
       if (!sheet) return
       const field = sheet.fields.find(f => f.id === fieldId)
       const row = sheet.rows[rowIndex]
@@ -673,7 +801,8 @@ export const useExcelStore = create<ExcelState>((set, get) => {
 
       const newRows = [...sheet.rows]
       newRows[rowIndex] = { ...row, fields: { ...row.fields, [field.id]: rawValue } }
-      set({ sheet: { ...sheet, rows: newRows } })
+      const newAllRows = allRows.map(r => r.id === row.id ? { ...r, fields: { ...r.fields, [field.id]: rawValue } } : r)
+      set({ sheet: { ...sheet, rows: newRows }, allRows: newAllRows })
 
       try {
         await adapter.updateCell(sheet.tableId, row.id, field.id, rawValue)

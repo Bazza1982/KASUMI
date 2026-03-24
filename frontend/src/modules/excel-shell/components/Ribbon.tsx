@@ -1,15 +1,19 @@
 import React, { useRef, useState } from 'react'
-import { Copy, Clipboard, Scissors, Bold, Italic, Plus, Trash2, Download, FileSpreadsheet, Upload, Columns, Settings, HelpCircle } from 'lucide-react'
+import { Copy, Clipboard, Scissors, Bold, Italic, Plus, Trash2, Download, FileSpreadsheet, Upload, Columns, Settings, HelpCircle, MessageSquare, AlignLeft, AlignCenter, AlignRight } from 'lucide-react'
 import { useExcelStore } from '../stores/useExcelStore'
 import { useAccessStore } from '../stores/useAccessStore'
 import { AccessModeSelector } from './AccessModeSelector'
 import ConnectionPanel from './ConnectionPanel'
+import type { CellFormat } from '../stores/useCellFormatStore'
 
 interface RibbonProps {
   onHelp: () => void
+  onToggleComments?: () => void
+  showCommentPanel?: boolean
+  onFormatSelection?: (fmt: Partial<CellFormat>) => void
 }
 
-const Ribbon: React.FC<RibbonProps> = ({ onHelp }) => {
+const Ribbon: React.FC<RibbonProps> = ({ onHelp, onToggleComments, showCommentPanel, onFormatSelection }) => {
   const { addRow, deleteSelectedRows, exportToCsv, exportToXlsx, importFromCsv, importFromXlsx, searchText, setSearchText, frozenColCount, toggleFreezeFirstCol } = useExcelStore()
   const { canAddRows, canDeleteRows, canImport, canExport } = useAccessStore()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -54,8 +58,11 @@ const Ribbon: React.FC<RibbonProps> = ({ onHelp }) => {
     {
       label: 'Format',
       buttons: [
-        { icon: <Bold size={16} />, label: 'Bold', action: () => {}, disabled: true },
-        { icon: <Italic size={16} />, label: 'Italic', action: () => {}, disabled: true },
+        { icon: <Bold size={16} />, label: 'Bold', action: () => onFormatSelection?.({ bold: true }), disabled: false },
+        { icon: <Italic size={16} />, label: 'Italic', action: () => onFormatSelection?.({ italic: true }), disabled: false },
+        { icon: <AlignLeft size={16} />, label: 'Align L', action: () => onFormatSelection?.({ align: 'left' }), disabled: false },
+        { icon: <AlignCenter size={16} />, label: 'Align C', action: () => onFormatSelection?.({ align: 'center' }), disabled: false },
+        { icon: <AlignRight size={16} />, label: 'Align R', action: () => onFormatSelection?.({ align: 'right' }), disabled: false },
       ],
     },
     {
@@ -144,6 +151,60 @@ const Ribbon: React.FC<RibbonProps> = ({ onHelp }) => {
         </div>
       ))}
 
+      {/* Color pickers group */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div style={{ display: 'flex', gap: 2, flex: 1, alignItems: 'center', flexWrap: 'wrap', maxWidth: 120 }}>
+          {/* Background colors */}
+          {[
+            { color: '#fef08a', label: 'Yellow BG' },
+            { color: '#fca5a5', label: 'Red BG' },
+            { color: '#86efac', label: 'Green BG' },
+            { color: '#93c5fd', label: 'Blue BG' },
+            { color: undefined, label: 'No BG' },
+          ].map(({ color, label }) => (
+            <button
+              key={label}
+              title={label}
+              onClick={() => onFormatSelection?.({ bgColor: color })}
+              style={{
+                width: 18, height: 18,
+                backgroundColor: color ?? 'white',
+                border: '1.5px solid rgba(255,255,255,0.5)',
+                borderRadius: 2,
+                cursor: 'pointer',
+                padding: 0,
+                flexShrink: 0,
+              }}
+            />
+          ))}
+          {/* Text colors */}
+          {[
+            { color: '#dc2626', label: 'Red Text' },
+            { color: '#16a34a', label: 'Green Text' },
+            { color: '#2563eb', label: 'Blue Text' },
+            { color: '#000000', label: 'Black Text' },
+          ].map(({ color, label }) => (
+            <button
+              key={label}
+              title={label}
+              onClick={() => onFormatSelection?.({ textColor: color })}
+              style={{
+                width: 18, height: 18,
+                backgroundColor: color,
+                border: '1.5px solid rgba(255,255,255,0.5)',
+                borderRadius: 2,
+                cursor: 'pointer',
+                padding: 0,
+                flexShrink: 0,
+              }}
+            />
+          ))}
+        </div>
+        <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', textAlign: 'center', paddingTop: 2, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+          Colors
+        </div>
+      </div>
+
       {/* Hidden file input for CSV import */}
       <input
         ref={fileInputRef}
@@ -172,6 +233,28 @@ const Ribbon: React.FC<RibbonProps> = ({ onHelp }) => {
 
       {/* Settings and Help buttons - far right before search */}
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button
+          onClick={onToggleComments}
+          title="Toggle Comments Panel"
+          style={{
+            backgroundColor: showCommentPanel ? 'rgba(255,255,255,0.25)' : 'transparent',
+            border: 'none',
+            color: 'white',
+            cursor: 'pointer',
+            padding: '4px 8px',
+            borderRadius: 3,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 2,
+            fontSize: '11px',
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.15)' }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = showCommentPanel ? 'rgba(255,255,255,0.25)' : 'transparent' }}
+        >
+          <MessageSquare size={16} />
+          <span>Comments</span>
+        </button>
         <AccessModeSelector />
         <button
           onClick={() => setShowSettings(true)}

@@ -1,8 +1,11 @@
 import React, { useRef, useEffect, useCallback, useState, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useExcelStore } from '../stores/useExcelStore'
+import { useCellFormatStore } from '../stores/useCellFormatStore'
+import { useCommentStore } from '../stores/useCommentStore'
 import { renderCellValue, getSelectOptionStyle } from './renderers'
 import type { FieldMeta, GridCoord, SelectOption } from '../types'
+import { NexcelLogger } from '../services/logger'
 
 const ROW_HEADER_WIDTH = 50
 const COL_HEADER_HEIGHT = 44
@@ -379,6 +382,11 @@ const VirtualGrid = () => {
     showAllColumns,
     commitCellByField,
   } = useExcelStore()
+
+  const { getFormat } = useCellFormatStore()
+  const { hasCellComment } = useCommentStore()
+
+  NexcelLogger.grid('debug', 'render', { rows: sheet?.rows.length ?? 0 })
 
   // Initial data load
   useEffect(() => { loadTables() }, [])
@@ -1120,6 +1128,12 @@ const VirtualGrid = () => {
                 ? getFrozenLeft(vc.index)
                 : vc.start + ROW_HEADER_WIDTH
 
+              // Format and comment indicator
+              const row = sheet?.rows[actualRowIndex]
+              const cellRef = row && field ? `${row.id}:${field.id}` : null
+              const fmt = cellRef ? getFormat(cellRef) : null
+              const hasComment = cellRef ? hasCellComment(cellRef) : false
+
               return (
                 <div
                   key={`c-${vr.index}-${vc.index}`}
@@ -1133,9 +1147,13 @@ const VirtualGrid = () => {
                       ? '2px solid #217346'
                       : '1px solid #e1dfdd',
                     borderBottom: '1px solid #e1dfdd',
-                    backgroundColor: selected && !active
+                    backgroundColor: fmt?.bgColor ?? (selected && !active
                       ? (isFrozen ? '#c8dbc8' : '#d9e8d9')
-                      : (isFrozen ? '#f9fef9' : (field?.readOnly ? '#f8f8f8' : 'white')),
+                      : (isFrozen ? '#f9fef9' : (field?.readOnly ? '#f8f8f8' : 'white'))),
+                    color: fmt?.textColor ?? undefined,
+                    fontWeight: fmt?.bold ? 'bold' : undefined,
+                    fontStyle: fmt?.italic ? 'italic' : undefined,
+                    textAlign: fmt?.align ?? undefined,
                     outline: active ? '2px solid #217346' : 'none',
                     outlineOffset: '-2px',
                     zIndex: active ? 4 : isFrozen ? 3 : 0,
@@ -1156,6 +1174,21 @@ const VirtualGrid = () => {
                     field={field}
                     isSelectEditing={isSelectEditing}
                   />
+                  {hasComment && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        right: 0,
+                        width: 0,
+                        height: 0,
+                        borderStyle: 'solid',
+                        borderWidth: '0 8px 8px 0',
+                        borderColor: 'transparent #f59e0b transparent transparent',
+                        pointerEvents: 'none',
+                      }}
+                    />
+                  )}
                 </div>
               )
             })

@@ -107,6 +107,15 @@ export interface CoordMap {
 }
 
 // ─────────────────────────────────────────────
+// Filter rules
+// ─────────────────────────────────────────────
+
+export interface FilterRule {
+  type: 'contains' | 'equals' | 'is_empty' | 'not_empty' | 'gt' | 'lt'
+  value: string
+}
+
+// ─────────────────────────────────────────────
 // Adapter contract
 // ─────────────────────────────────────────────
 
