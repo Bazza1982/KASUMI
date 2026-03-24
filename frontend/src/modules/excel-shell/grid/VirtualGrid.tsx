@@ -5,8 +5,19 @@ import { renderCellValue, getSelectOptionStyle } from './renderers'
 import type { FieldMeta, GridCoord, SelectOption } from '../types'
 
 const ROW_HEADER_WIDTH = 50
-const COL_HEADER_HEIGHT = 24
+const COL_HEADER_HEIGHT = 44
 const DEFAULT_COL_WIDTH = 110
+
+// Convert 0-based column index to Excel-style letter(s): 0→A, 25→Z, 26→AA …
+function colLabel(index: number): string {
+  let label = ''
+  let n = index
+  while (n >= 0) {
+    label = String.fromCharCode(65 + (n % 26)) + label
+    n = Math.floor(n / 26) - 1
+  }
+  return label
+}
 const DEFAULT_ROW_HEIGHT = 24
 
 // ── SelectChip ────────────────────────────────────────────────────────────────
@@ -942,28 +953,31 @@ const VirtualGrid = () => {
                     backgroundColor: isColActive ? '#e8f0e8' : '#f3f2f1',
                     borderRight: '1px solid #e1dfdd',
                     display: 'flex',
+                    flexDirection: 'column',
                     alignItems: 'center',
-                    padding: '0 6px',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    color: '#333',
+                    justifyContent: 'center',
+                    padding: '2px 4px',
                     userSelect: 'none',
                     overflow: 'hidden',
-                    whiteSpace: 'nowrap',
-                    textOverflow: 'ellipsis',
                     boxSizing: 'border-box',
                     cursor: 'pointer',
+                    gap: 1,
                   }}
                   onClick={() => { if (!isResizingActiveRef.current) toggleSort(vc.index) }}
                   onContextMenu={e => handleColHeaderContextMenu(vc.index, e)}
                 >
-                  {field?.name ?? ''}
-                  {field?.readOnly && <span style={{ fontSize: '10px', marginLeft: 3, opacity: 0.6 }}>🔒</span>}
-                  {sortConfig?.fieldIndex === vc.index && (
-                    <span style={{ marginLeft: 4, fontSize: '10px', color: '#217346' }}>
-                      {sortConfig.direction === 'asc' ? '▲' : '▼'}
-                    </span>
-                  )}
+                  <span style={{ fontSize: '11px', color: '#999', lineHeight: 1, letterSpacing: '0.5px', fontWeight: 500 }}>
+                    {colLabel(vc.index)}
+                  </span>
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#222', lineHeight: 1.2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', maxWidth: '100%', textAlign: 'center' }}>
+                    {field?.name ?? ''}
+                    {field?.readOnly && <span style={{ fontSize: '10px', marginLeft: 2, opacity: 0.6 }}>🔒</span>}
+                    {sortConfig?.fieldIndex === vc.index && (
+                      <span style={{ marginLeft: 3, fontSize: '10px', color: '#217346' }}>
+                        {sortConfig.direction === 'asc' ? '▲' : '▼'}
+                      </span>
+                    )}
+                  </span>
                   {/* Resize handle */}
                   <div
                     style={{
@@ -999,28 +1013,32 @@ const VirtualGrid = () => {
                   backgroundColor: isColActive ? '#d0ecd0' : '#eaf4ea',
                   borderRight: idx === frozenColCount - 1 ? '2px solid #217346' : '1px solid #e1dfdd',
                   display: 'flex',
+                  flexDirection: 'column',
                   alignItems: 'center',
-                  padding: '0 6px',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  color: '#333',
+                  justifyContent: 'center',
+                  padding: '2px 4px',
                   userSelect: 'none',
                   zIndex: 6,
                   cursor: 'pointer',
                   boxSizing: 'border-box',
                   overflow: 'hidden',
-                  whiteSpace: 'nowrap',
+                  gap: 1,
                 }}
                 onClick={() => { if (!isResizingActiveRef.current) toggleSort(idx) }}
                 onContextMenu={e => handleColHeaderContextMenu(idx, e)}
               >
-                {field.name}
-                {field.readOnly && <span style={{ fontSize: '10px', marginLeft: 3, opacity: 0.6 }}>🔒</span>}
-                {sortConfig?.fieldIndex === idx && (
-                  <span style={{ marginLeft: 4, fontSize: '10px', color: '#217346' }}>
-                    {sortConfig.direction === 'asc' ? '▲' : '▼'}
-                  </span>
-                )}
+                <span style={{ fontSize: '11px', color: '#5a8a5a', lineHeight: 1, letterSpacing: '0.5px', fontWeight: 500 }}>
+                  {colLabel(idx)}
+                </span>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: '#1a4a1a', lineHeight: 1.2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', maxWidth: '100%', textAlign: 'center' }}>
+                  {field.name}
+                  {field.readOnly && <span style={{ fontSize: '10px', marginLeft: 2, opacity: 0.6 }}>🔒</span>}
+                  {sortConfig?.fieldIndex === idx && (
+                    <span style={{ marginLeft: 3, fontSize: '10px', color: '#217346' }}>
+                      {sortConfig.direction === 'asc' ? '▲' : '▼'}
+                    </span>
+                  )}
+                </span>
                 {/* Resize handle */}
                 <div
                   style={{

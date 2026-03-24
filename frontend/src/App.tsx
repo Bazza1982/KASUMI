@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import ExcelShellRoute from './modules/excel-shell/ExcelShellRoute'
 import WordoShellRoute from './modules/wordo-shell/WordoShellRoute'
 import type { KasumiShell } from './platform/types'
@@ -6,15 +6,22 @@ import './index.css'
 
 const SHELL_KEY = 'kasumi_active_shell'
 const SPLASH_KEY = 'kasumi_splash_seen'
+const POS_KEY = 'kasumi_switcher_pos'
 
 function App() {
   const saved = (typeof localStorage !== 'undefined' ? localStorage.getItem(SHELL_KEY) : null) as KasumiShell | null
   const [shell, setShell] = useState<KasumiShell>(saved ?? 'nexcel')
 
-  // Show splash only on the very first load per session
   const [showSplash, setShowSplash] = useState(() =>
     typeof sessionStorage !== 'undefined' && !sessionStorage.getItem(SPLASH_KEY)
   )
+
+  // Draggable position — default bottom-right
+  const savedPos = (() => { try { return JSON.parse(localStorage.getItem(POS_KEY) || 'null') } catch { return null } })()
+  const [pos, setPos] = useState<{x: number, y: number}>(savedPos ?? { x: window.innerWidth - 200, y: window.innerHeight - 50 })
+  const dragging = useRef(false)
+  const dragOffset = useRef({ x: 0, y: 0 })
+  const switcherRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (showSplash) {
@@ -29,6 +36,32 @@ function App() {
     setShell(s)
   }
 
+  const onMouseDown = (e: React.MouseEvent) => {
+    // Only drag on the wordmark handle, not the buttons
+    if ((e.target as HTMLElement).tagName === 'BUTTON') return
+    dragging.current = true
+    dragOffset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y }
+    e.preventDefault()
+  }
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragging.current) return
+      const nx = Math.max(0, Math.min(window.innerWidth - 180, e.clientX - dragOffset.current.x))
+      const ny = Math.max(0, Math.min(window.innerHeight - 36, e.clientY - dragOffset.current.y))
+      setPos({ x: nx, y: ny })
+    }
+    const onUp = () => {
+      if (dragging.current) {
+        dragging.current = false
+        setPos(p => { localStorage.setItem(POS_KEY, JSON.stringify(p)); return p })
+      }
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+  }, [])
+
   const btnClass = (s: KasumiShell) =>
     shell === s
       ? `kasumi-switcher__btn kasumi-switcher__btn--${s}`
@@ -37,34 +70,31 @@ function App() {
   return (
     <div className="app" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
 
-      {/* Splash screen — first load per session only */}
       {showSplash && (
         <div className="kasumi-splash">
-          <div className="kasumi-splash__logo">
-            KA<span>SU</span>MI
-          </div>
+          <div className="kasumi-splash__logo">KA<span>SU</span>MI</div>
           <div className="kasumi-splash__bar" />
           <div className="kasumi-splash__sub">Intelligent Workspace Platform</div>
         </div>
       )}
 
-      {/* Shell Switcher — top-left, persistent */}
-      <div className="kasumi-switcher">
-        <div className="kasumi-switcher__wordmark">
+      {/* Draggable Shell Switcher */}
+      <div
+        ref={switcherRef}
+        className="kasumi-switcher"
+        style={{ left: pos.x, top: pos.y }}
+        onMouseDown={onMouseDown}
+      >
+        <div className="kasumi-switcher__wordmark" style={{ cursor: 'grab' }}>
           KA<em>SU</em>MI
         </div>
         {(['nexcel', 'wordo'] as KasumiShell[]).map(s => (
-          <button
-            key={s}
-            className={btnClass(s)}
-            onClick={() => switchShell(s)}
-          >
+          <button key={s} className={btnClass(s)} onClick={() => switchShell(s)}>
             {s === 'nexcel' ? 'NEXCEL' : 'WORDO'}
           </button>
         ))}
       </div>
 
-      {/* Active shell */}
       {shell === 'nexcel' && <ExcelShellRoute />}
       {shell === 'wordo' && <WordoShellRoute />}
     </div>

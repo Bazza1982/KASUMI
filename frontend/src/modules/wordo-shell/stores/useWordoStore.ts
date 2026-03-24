@@ -5,6 +5,12 @@ import { wordoSchema } from '../editor/schema'
 import { buildPlugins } from '../editor/sectionPlugins'
 import type { KasumiDocument, DocumentSection, PageStyle, WatermarkConfig } from '../types/document'
 import type { ImportResult } from '../services/DocxImporter'
+import { saveDocument, loadDocument, scheduleAutoSave } from '../services/DocumentPersistence'
+import { useCommentStore } from './useCommentStore'
+import { useTrackChangeStore } from './useTrackChangeStore'
+import { createLogger } from '../editor/logger'
+
+const log = createLogger('WordoStore')
 
 const DEFAULT_PAGE_STYLE: PageStyle = {
   id: 'default',
@@ -49,6 +55,12 @@ interface WordoState {
   updateSectionWatermark: (sectionId: string, watermark: WatermarkConfig) => void
   insertNexcelEmbed: (sourceObjectId: string, mode: 'linked' | 'snapshot', caption: string) => void
   loadFromImport: (result: ImportResult) => void
+  /** Save current document to localStorage immediately */
+  saveNow: () => boolean
+  /** Schedule a debounced auto-save (call after each PM transaction) */
+  triggerAutoSave: () => void
+  /** Load a document from localStorage by ID, replacing current state */
+  loadDoc: (docId: string) => boolean
 }
 
 export const useWordoStore = create<WordoState>((set, get) => {
@@ -97,6 +109,68 @@ export const useWordoStore = create<WordoState>((set, get) => {
         const el = document.querySelector(`[data-section-id="${sectionId}"] .ProseMirror`) as HTMLElement | null
         el?.focus()
       }, 50)
+    },
+
+    saveNow: () => {
+      const { orchestrator, document: doc } = get()
+      const { getAllComments } = useCommentStore.getState()
+      const { getAllChanges } = useTrackChangeStore.getState()
+      return saveDocument({
+        orchestrator,
+        document: doc,
+        comments: getAllComments(),
+        trackChanges: getAllChanges(),
+      })
+    },
+
+    triggerAutoSave: () => {
+      scheduleAutoSave(() => get().saveNow())
+    },
+
+    loadDoc: (docId) => {
+      const result = loadDocument(docId)
+      if (!result) {
+        log.warn('load-doc-not-found', { docId })
+        return false
+      }
+      const { orchestrator: orch } = get()
+      orch.getSections().forEach(inst => orch.removeSection(inst.sectionId))
+
+      const now = new Date().toISOString()
+      const newSections: DocumentSection[] = result.sections.map(s => {
+        // Inject the loaded EditorState directly into a new section slot
+        const inst = orch.createSection(s.sectionId)
+        // Replace state with loaded state via a full-doc replace transaction
+        const tr = inst.state.tr.replaceWith(0, inst.state.doc.content.size, s.state.doc.content)
+        orch.applyTransaction(s.sectionId, tr)
+        return { id: s.sectionId, pageStyle: s.pageStyle, watermark: s.watermark, blocks: [], footnotes: [] }
+      })
+
+      // Restore sidecar stores
+      const commentStore = useCommentStore.getState()
+      result.comments.forEach(c => {
+        // Re-populate comment store directly (bypass addComment to avoid duplicate IDs)
+        useCommentStore.setState(state => {
+          const next = new Map(state.comments)
+          next.set(c.id, c)
+          return { comments: next }
+        })
+      })
+
+      set({
+        document: {
+          id: result.documentId,
+          title: result.title,
+          styleRegistry: [],
+          defaultPageStyle: DEFAULT_PAGE_STYLE,
+          sections: newSections,
+          createdAt: now,
+          updatedAt: now,
+        },
+        focusedSectionId: null,
+      })
+      log.info('doc-loaded-into-store', { docId, sections: newSections.length })
+      return true
     },
 
     // Load imported .docx result — replaces current document

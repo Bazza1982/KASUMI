@@ -4,13 +4,17 @@ import { baseKeymap, toggleMark, setBlockType, wrapIn } from 'prosemirror-comman
 import { wrapInList, splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-list'
 import { inputRules, wrappingInputRule, textblockTypeInputRule } from 'prosemirror-inputrules'
 import { tableEditing, columnResizing, goToNextCell } from 'prosemirror-tables'
+import { buildBlockIdPlugin } from './blockIdPlugin'
+import { buildTrackChangePlugin } from './trackChangePlugin'
 import type { WordoSchema } from './schema'
 
-export function buildPlugins(schema: WordoSchema) {
+export function buildPlugins(schema: WordoSchema, currentUser = 'user') {
   return [
     history(),
     columnResizing(),
     tableEditing(),
+    buildBlockIdPlugin(currentUser),
+    buildTrackChangePlugin(),
 
     keymap({
       'Mod-z': undo,
@@ -18,6 +22,9 @@ export function buildPlugins(schema: WordoSchema) {
       'Mod-Shift-z': redo,
       'Mod-b': toggleMark(schema.marks.strong),
       'Mod-i': toggleMark(schema.marks.em),
+      'Mod-u': toggleMark(schema.marks.underline),
+      'Mod-Shift-x': toggleMark(schema.marks.strikethrough),
+      'Mod-Shift-h': toggleMark(schema.marks.highlight),
       'Tab': (state, dispatch) => {
         // Try table navigation first, fall back to list indent
         if (goToNextCell(1)(state, dispatch)) return true

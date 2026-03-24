@@ -230,15 +230,15 @@ const Ribbon: React.FC<RibbonProps> = ({ onHelp }) => {
             height: 28,
             padding: '0 10px',
             borderRadius: 4,
-            border: '1px solid rgba(255,255,255,0.4)',
-            backgroundColor: 'rgba(255,255,255,0.15)',
-            color: 'white',
+            border: '1.5px solid rgba(255,255,255,0.85)',
+            backgroundColor: 'rgba(255,255,255,0.92)',
+            color: '#1a1a1a',
             fontSize: '13px',
             outline: 'none',
             width: 180,
           }}
-          onFocus={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.25)' }}
-          onBlur={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.15)' }}
+          onFocus={e => { e.currentTarget.style.backgroundColor = '#ffffff' }}
+          onBlur={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.92)' }}
         />
       </div>
     </div>

@@ -107,3 +107,157 @@
 .wordo-canvas::-webkit-scrollbar { width: 8px; }
 .wordo-canvas::-webkit-scrollbar-track { background: #d8d8d8; }
 .wordo-canvas::-webkit-scrollbar-thumb { background: #aaa; border-radius: 4px; }
+
+/* ── Comment refs ─────────────────────────────────────────── */
+.wordo-comment-ref {
+  border-bottom: 2px solid #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+  cursor: pointer;
+}
+.wordo-comment-ref:hover {
+  background: rgba(245, 158, 11, 0.18);
+}
+
+/* ── Track changes ────────────────────────────────────────── */
+ins.wordo-track-insert {
+  background: rgba(34, 197, 94, 0.15);
+  text-decoration: none;
+  border-bottom: 1px solid #22c55e;
+}
+del.wordo-track-delete {
+  background: rgba(239, 68, 68, 0.1);
+  text-decoration: line-through;
+  color: #9ca3af;
+}
+
+/* ── Comment Panel ────────────────────────────────────────── */
+.wordo-comment-panel {
+  width: 280px;
+  background: #fff;
+  border-left: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  overflow-y: auto;
+}
+.wordo-comment-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e5e7eb;
+  font-weight: 600;
+  color: #374151;
+}
+.wordo-comment-panel__count {
+  font-size: 11px;
+  background: #f3f4f6;
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: #6b7280;
+}
+.wordo-comment-panel__empty {
+  padding: 20px 14px;
+  color: #9ca3af;
+  font-style: italic;
+  text-align: center;
+}
+.wordo-comment-panel__resolved-section {
+  padding: 0 8px;
+  color: #6b7280;
+}
+.wordo-comment-panel__resolved-section summary {
+  padding: 8px 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+/* ── Comment Bubble ───────────────────────────────────────── */
+.wordo-comment-bubble {
+  padding: 10px 14px;
+  border-bottom: 1px solid #f3f4f6;
+}
+.wordo-comment-bubble--resolved {
+  opacity: 0.6;
+}
+.wordo-comment-bubble__anchor-text {
+  font-size: 11px;
+  color: #f59e0b;
+  font-style: italic;
+  margin-bottom: 6px;
+  border-left: 2px solid #f59e0b;
+  padding-left: 6px;
+  line-height: 1.4;
+}
+.wordo-comment-bubble__author {
+  font-weight: 600;
+  color: #374151;
+  font-size: 12px;
+}
+.wordo-comment-bubble__text {
+  color: #1f2937;
+  margin: 2px 0;
+  line-height: 1.5;
+}
+.wordo-comment-bubble__time {
+  font-size: 10px;
+  color: #9ca3af;
+  margin-top: 2px;
+}
+.wordo-comment-bubble__reply {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: #f9fafb;
+  border-radius: 4px;
+}
+.wordo-comment-bubble__actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.wordo-comment-bubble__actions button {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  color: #374151;
+}
+.wordo-comment-bubble__actions button:hover {
+  background: #f3f4f6;
+}
+.wordo-comment-bubble__delete {
+  color: #ef4444 !important;
+  border-color: #fca5a5 !important;
+  margin-left: auto;
+}
+.wordo-comment-bubble__reply-input {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wordo-comment-bubble__reply-input textarea {
+  font-size: 12px;
+  padding: 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  resize: vertical;
+  font-family: inherit;
+}
+.wordo-comment-bubble__reply-input button {
+  font-size: 11px;
+  padding: 3px 10px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.wordo-comment-bubble__reply-input button:first-of-type {
+  background: #2563eb;
+  color: #fff;
+}
+.wordo-comment-bubble__reply-input button:last-of-type {
+  background: #f3f4f6;
+  color: #374151;
+}

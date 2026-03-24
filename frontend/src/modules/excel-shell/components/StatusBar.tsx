@@ -49,6 +49,9 @@ const StatusBar = () => {
     ? `${sheet.fields[sortConfig.fieldIndex]?.name ?? ''} ${sortConfig.direction === 'asc' ? '▲' : '▼'}`
     : ''
 
+  const [zoom, setZoom] = React.useState(100)
+  const [viewMode, setViewMode] = React.useState<'normal'|'layout'|'pagebreak'>('normal')
+
   return (
     <div style={{
       height: '24px',
@@ -57,21 +60,44 @@ const StatusBar = () => {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      padding: '0 16px',
+      padding: '0 8px 0 12px',
       fontSize: '12px',
       userSelect: 'none',
-      gap: 16,
+      flexShrink: 0,
     }}>
-      <span>{statusText}</span>
-      <span style={{ display: 'flex', gap: 12, alignItems: 'center', opacity: 0.9 }}>
-        {analytics?.sum !== undefined && <span>Sum: {analytics.sum.toFixed(2)}</span>}
-        {analytics?.avg !== undefined && <span>Avg: {analytics.avg.toFixed(2)}</span>}
-        {analytics?.min !== undefined && <span>Min: {analytics.min}</span>}
-        {analytics?.max !== undefined && <span>Max: {analytics.max}</span>}
-        {analytics?.count !== undefined && selCount > 1 && <span>Count: {analytics.count}</span>}
-        {sortLabel && <span>&#8597; {sortLabel}</span>}
-        {searchText && <span>Filtered</span>}
-        {sheet && <span>{sheet.rows.length} rows</span>}
+      {/* Left — status + analytics */}
+      <span style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+        <span>{statusText}</span>
+        {sheet && <span style={{ opacity: 0.8 }}>| {sheet.rows.length} rows</span>}
+        {sortLabel && <span style={{ opacity: 0.8 }}>| &#8597; {sortLabel}</span>}
+        {searchText && <span style={{ opacity: 0.8 }}>| Filtered</span>}
+        {analytics?.sum !== undefined && <span style={{ opacity: 0.85 }}>| Sum: {analytics.sum.toFixed(2)}</span>}
+        {analytics?.avg !== undefined && <span style={{ opacity: 0.85 }}>Avg: {analytics.avg.toFixed(2)}</span>}
+        {analytics?.count !== undefined && selCount > 1 && <span style={{ opacity: 0.85 }}>Count: {analytics.count}</span>}
+      </span>
+
+      {/* Right — view switcher + zoom */}
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {/* View mode icons */}
+        {([
+          { key: 'normal',    label: '⊞', title: 'Normal View' },
+          { key: 'layout',    label: '⊟', title: 'Page Layout' },
+          { key: 'pagebreak', label: '⊠', title: 'Page Break Preview' },
+        ] as const).map(v => (
+          <button key={v.key} title={v.title} onClick={() => setViewMode(v.key)} style={{
+            background: 'none', border: viewMode === v.key ? '1px solid rgba(255,255,255,0.6)' : 'none',
+            borderRadius: 3, color: 'white', cursor: 'pointer',
+            padding: '0 3px', fontSize: 13, lineHeight: '18px', opacity: viewMode === v.key ? 1 : 0.65,
+          }}>{v.label}</button>
+        ))}
+
+        {/* Zoom slider */}
+        <span style={{ opacity: 0.7, margin: '0 4px', fontSize: 11 }}>|</span>
+        <input type="range" min={50} max={200} step={10} value={zoom}
+          onChange={e => setZoom(Number(e.target.value))}
+          style={{ width: 70, accentColor: '#fff', cursor: 'pointer' }}
+        />
+        <span style={{ minWidth: 36, textAlign: 'right', opacity: 0.9, fontSize: 11 }}>{zoom}%</span>
       </span>
     </div>
   )
