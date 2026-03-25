@@ -61,6 +61,8 @@ interface WordoState {
   triggerAutoSave: () => void
   /** Load a document from localStorage by ID, replacing current state */
   loadDoc: (docId: string) => boolean
+  /** Reset to a fresh blank document */
+  resetDocument: () => void
 }
 
 export const useWordoStore = create<WordoState>((set, get) => {
@@ -171,6 +173,15 @@ export const useWordoStore = create<WordoState>((set, get) => {
       })
       log.info('doc-loaded-into-store', { docId, sections: newSections.length })
       return true
+    },
+
+    resetDocument: () => {
+      const { orchestrator: orch } = get()
+      orch.getSections().forEach(inst => orch.removeSection(inst.sectionId))
+      const fresh = makeNewDocument()
+      fresh.sections.forEach(s => orch.createSection(s.id))
+      set({ document: fresh, focusedSectionId: null })
+      log.info('doc-reset', {})
     },
 
     // Load imported .docx result — replaces current document

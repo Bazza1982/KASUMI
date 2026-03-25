@@ -14,6 +14,7 @@ import { executeCommand } from './services/CommandExecutor'
 import { addCommentMark, getSelectedText, getSelectionBlockId } from './editor/commentCommands'
 import { acceptInsert, acceptDelete, rejectInsert, rejectDelete } from './editor/trackChangePlugin'
 import { createLogger } from './editor/logger'
+import { onMenuNewDocument } from '../../platform/native/useNativeBridge'
 
 const log = createLogger('WordoShellRoute')
 
@@ -23,7 +24,7 @@ function promptComment(anchorText: string): string | null {
 }
 
 export const WordoShellRoute: React.FC = () => {
-  const { document: doc, orchestrator, insertNexcelEmbed, loadFromImport, saveNow, triggerAutoSave, focusedSectionId } = useWordoStore()
+  const { document: doc, orchestrator, insertNexcelEmbed, loadFromImport, saveNow, triggerAutoSave, focusedSectionId, resetDocument } = useWordoStore()
   const access = useWordoAccessStore()
   const trackChange = useTrackChangeStore()
   const commentStore = useCommentStore()
@@ -44,6 +45,13 @@ export const WordoShellRoute: React.FC = () => {
     setTimeout(() => setSaveStatus('idle'), 2000)
     log.info('manual-save', { ok })
   }, [saveNow])
+
+  // Native menu: New Document
+  useEffect(() => onMenuNewDocument(() => {
+    if (window.confirm('Start a new document? Unsaved changes will be lost.')) {
+      resetDocument()
+    }
+  }), [resetDocument])
 
   // Ctrl+S shortcut
   useEffect(() => {

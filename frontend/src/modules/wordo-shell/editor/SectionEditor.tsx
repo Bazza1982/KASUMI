@@ -4,6 +4,7 @@ import { TableView } from 'prosemirror-tables'
 import { NexcelEmbedView } from './NexcelEmbedView'
 import { HeaderFooterEditor } from './HeaderFooterEditor'
 import { WatermarkOverlay } from '../components/WatermarkOverlay'
+import { useWordoStore } from '../stores/useWordoStore'
 import type { LayoutOrchestrator } from './LayoutOrchestrator'
 import type { PageStyle, SectionId, WatermarkConfig } from '../types/document'
 import 'prosemirror-view/style/prosemirror.css'
@@ -64,7 +65,11 @@ export const SectionEditor: React.FC<SectionEditorProps> = ({
     })
     viewRef.current = view
 
-    const onFocusIn  = () => { setFocused(true);  orchestrator.setFocusedSection(sectionId) }
+    const onFocusIn  = () => {
+      setFocused(true)
+      orchestrator.setFocusedSection(sectionId)
+      useWordoStore.getState().setFocusedSection(sectionId)
+    }
     const onFocusOut = () => setFocused(false)
     mountRef.current.addEventListener('focusin',  onFocusIn)
     mountRef.current.addEventListener('focusout', onFocusOut)
