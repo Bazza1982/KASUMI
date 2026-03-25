@@ -93,26 +93,26 @@ export const WordoRibbon: React.FC<WordoRibbonProps> = ({
     if (!focusedSectionId || !access.canEditBody) return
     const instance = orchestrator.getSection(focusedSectionId)
     if (!instance) return
-    cmd(instance.state, (tr) => orchestrator.applyTransaction(focusedSectionId, tr))
+    // Focus editor first so ProseMirror selection is restored before command runs
     const el = document.querySelector(`[data-section-id="${focusedSectionId}"] .ProseMirror`) as HTMLElement | null
     el?.focus()
+    cmd(instance.state, (tr) => orchestrator.applyTransaction(focusedSectionId, tr))
   }, [focusedSectionId, orchestrator, access.canEditBody])
 
   const applyMarkWithAttrs = useCallback((markName: string, attrs: Record<string, unknown>) => {
     if (!focusedSectionId || !access.canEditBody) return
     const instance = orchestrator.getSection(focusedSectionId)
     if (!instance) return
+    const el = document.querySelector(`[data-section-id="${focusedSectionId}"] .ProseMirror`) as HTMLElement | null
+    el?.focus()
     const { state } = instance
     const markType = wordoSchema.marks[markName]
     if (!markType) return
     const mark = markType.create(attrs)
     const { from, to } = state.selection
     if (from === to) return
-    // Toggle: if all selected has this mark with same attrs, remove; else add
     const tr = state.tr.addMark(from, to, mark)
     orchestrator.applyTransaction(focusedSectionId, tr)
-    const el = document.querySelector(`[data-section-id="${focusedSectionId}"] .ProseMirror`) as HTMLElement | null
-    el?.focus()
   }, [focusedSectionId, orchestrator, access.canEditBody])
 
   const applyFontSize = useCallback((size: string) => {

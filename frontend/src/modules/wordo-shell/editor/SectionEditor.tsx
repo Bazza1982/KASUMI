@@ -70,7 +70,20 @@ export const SectionEditor: React.FC<SectionEditorProps> = ({
       orchestrator.setFocusedSection(sectionId)
       useWordoStore.getState().setFocusedSection(sectionId)
     }
-    const onFocusOut = () => setFocused(false)
+    const onFocusOut = (e: FocusEvent) => {
+      // If focus moved to another element inside the editor section, ignore
+      const relatedTarget = e.relatedTarget as Node | null
+      if (relatedTarget && mountRef.current?.contains(relatedTarget)) return
+      // If focus moved to a ProseMirror editor in another section, allow clear
+      // Otherwise (focus moved to Ribbon/toolbar/button), keep focusedSectionId intact
+      if (relatedTarget && (relatedTarget as HTMLElement).closest?.('.wordo-section-wrapper')) {
+        setFocused(false)
+        return
+      }
+      // Focus went to toolbar/ribbon — keep section focused so commands still work
+      setFocused(false)
+      // Do NOT clear focusedSectionId here
+    }
     mountRef.current.addEventListener('focusin',  onFocusIn)
     mountRef.current.addEventListener('focusout', onFocusOut)
 
