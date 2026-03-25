@@ -168,7 +168,7 @@ export const WordoRibbon: React.FC<WordoRibbonProps> = ({
       {/* Title row */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
-        padding: '5px 10px 5px 210px',
+        padding: '5px 10px 5px 10px',
         background: 'var(--surface, #fff)',
         borderBottom: '1px solid var(--border, #e2e8f0)',
       }}>
