@@ -102,6 +102,11 @@ interface ExcelState {
   toggleHideColumn: (fieldId: number) => void
   showAllColumns: () => void
 
+  // ── Cut/Paste ─────────────────────────────────────
+  cutSelection: SelectionRange | null
+  cutCells: () => void
+  clearCutAfterPaste: () => void
+
   // ── Helpers (pure read) ───────────────────────────
   getCellDisplay: (rowIndex: number, colIndex: number) => string
   getCellRaw: (rowIndex: number, colIndex: number) => unknown
@@ -215,6 +220,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     redoStack: [],
     frozenColCount: 0,
     hiddenFieldIds: [],
+    cutSelection: null,
 
     // ── Data loading ──────────────────────────────────
 
@@ -803,6 +809,47 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     },
 
     showAllColumns: () => set({ hiddenFieldIds: [] }),
+
+    // ── Cut/Paste ─────────────────────────────────────
+
+    cutCells: () => {
+      const { selection, getCellDisplay, sheet } = get()
+      if (!selection || !sheet) return
+
+      const minRow = Math.min(selection.startRow, selection.endRow)
+      const maxRow = Math.max(selection.startRow, selection.endRow)
+      const minCol = Math.min(selection.startCol, selection.endCol)
+      const maxCol = Math.max(selection.startCol, selection.endCol)
+      const lines: string[] = []
+      for (let r = minRow; r <= maxRow; r++) {
+        const cells: string[] = []
+        for (let c = minCol; c <= maxCol; c++) cells.push(getCellDisplay(r, c))
+        lines.push(cells.join('\t'))
+      }
+      navigator.clipboard.writeText(lines.join('\n'))
+      NexcelLogger.store('info', 'cutCells', { minRow, maxRow, minCol, maxCol })
+      set({ cutSelection: { ...selection } })
+    },
+
+    clearCutAfterPaste: async () => {
+      const { cutSelection, sheet } = get()
+      if (!cutSelection || !sheet) return
+
+      const minRow = Math.min(cutSelection.startRow, cutSelection.endRow)
+      const maxRow = Math.max(cutSelection.startRow, cutSelection.endRow)
+      const minCol = Math.min(cutSelection.startCol, cutSelection.endCol)
+      const maxCol = Math.max(cutSelection.startCol, cutSelection.endCol)
+
+      const coords: GridCoord[] = []
+      for (let r = minRow; r <= maxRow; r++) {
+        for (let c = minCol; c <= maxCol; c++) {
+          coords.push({ rowIndex: r, colIndex: c })
+        }
+      }
+      NexcelLogger.store('info', 'clearCutAfterPaste', { coords: coords.length })
+      set({ cutSelection: null })
+      await get().clearCells(coords)
+    },
 
     // ── Pure helpers ──────────────────────────────────
 

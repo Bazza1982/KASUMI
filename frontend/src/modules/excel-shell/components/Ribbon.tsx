@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react'
-import { Copy, Clipboard, Scissors, Bold, Italic, Plus, Trash2, Download, FileSpreadsheet, Upload, Columns, Settings, HelpCircle, MessageSquare, AlignLeft, AlignCenter, AlignRight } from 'lucide-react'
+import { Copy, Clipboard, Scissors, Bold, Italic, Plus, Trash2, Download, FileSpreadsheet, Upload, Columns, Settings, HelpCircle, MessageSquare, AlignLeft, AlignCenter, AlignRight, Filter } from 'lucide-react'
 import { useExcelStore } from '../stores/useExcelStore'
 import { useAccessStore } from '../stores/useAccessStore'
 import { AccessModeSelector } from './AccessModeSelector'
@@ -11,10 +11,11 @@ interface RibbonProps {
   onToggleComments?: () => void
   showCommentPanel?: boolean
   onFormatSelection?: (fmt: Partial<CellFormat>) => void
+  onConditionalFormat?: () => void
 }
 
-const Ribbon: React.FC<RibbonProps> = ({ onHelp, onToggleComments, showCommentPanel, onFormatSelection }) => {
-  const { addRow, deleteSelectedRows, exportToCsv, exportToXlsx, importFromCsv, importFromXlsx, searchText, setSearchText, frozenColCount, toggleFreezeFirstCol } = useExcelStore()
+const Ribbon: React.FC<RibbonProps> = ({ onHelp, onToggleComments, showCommentPanel, onFormatSelection, onConditionalFormat }) => {
+  const { addRow, deleteSelectedRows, exportToCsv, exportToXlsx, importFromCsv, importFromXlsx, searchText, setSearchText, frozenColCount, toggleFreezeFirstCol, cutCells, clearCutAfterPaste, pasteGrid } = useExcelStore()
   const { canAddRows, canDeleteRows, canImport, canExport } = useAccessStore()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const xlsxInputRef = useRef<HTMLInputElement>(null)
@@ -39,13 +40,24 @@ const Ribbon: React.FC<RibbonProps> = ({ onHelp, onToggleComments, showCommentPa
     navigator.clipboard.writeText(lines.join('\n'))
   }
 
+  const pasteAction = async () => {
+    const { selection } = useExcelStore.getState()
+    const text = await navigator.clipboard.readText().catch(() => '')
+    if (!text || !selection) return
+    const rows = text.split('\n').map(line => line.split('\t'))
+    const startRow = Math.min(selection.startRow, selection.endRow)
+    const startCol = Math.min(selection.startCol, selection.endCol)
+    await pasteGrid(startRow, startCol, rows)
+    await clearCutAfterPaste()
+  }
+
   const groups = [
     {
       label: 'Clipboard',
       buttons: [
-        { icon: <Clipboard size={16} />, label: 'Paste', action: () => {}, disabled: false },
+        { icon: <Clipboard size={16} />, label: 'Paste', action: pasteAction, disabled: false },
         { icon: <Copy size={16} />, label: 'Copy', action: copyAction, disabled: false },
-        { icon: <Scissors size={16} />, label: 'Cut', action: () => {}, disabled: false },
+        { icon: <Scissors size={16} />, label: 'Cut', action: cutCells, disabled: false },
       ],
     },
     {
@@ -63,6 +75,7 @@ const Ribbon: React.FC<RibbonProps> = ({ onHelp, onToggleComments, showCommentPa
         { icon: <AlignLeft size={16} />, label: 'Align L', action: () => onFormatSelection?.({ align: 'left' }), disabled: false },
         { icon: <AlignCenter size={16} />, label: 'Align C', action: () => onFormatSelection?.({ align: 'center' }), disabled: false },
         { icon: <AlignRight size={16} />, label: 'Align R', action: () => onFormatSelection?.({ align: 'right' }), disabled: false },
+        { icon: <Filter size={16} />, label: 'Cond. Fmt', action: () => onConditionalFormat?.(), disabled: false },
       ],
     },
     {

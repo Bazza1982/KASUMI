@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useCallback, useState, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useExcelStore } from '../stores/useExcelStore'
 import { useCellFormatStore } from '../stores/useCellFormatStore'
+import { useConditionalFormatStore } from '../stores/useConditionalFormatStore'
 import { useCommentStore } from '../stores/useCommentStore'
 import { renderCellValue, getSelectOptionStyle } from './renderers'
 import type { FieldMeta, GridCoord, SelectOption } from '../types'
@@ -489,9 +490,11 @@ const VirtualGrid = () => {
     toggleHideColumn,
     showAllColumns,
     commitCellByField,
+    cutSelection,
   } = useExcelStore()
 
   const { getFormat } = useCellFormatStore()
+  const { evaluateCell: evaluateConditionalFormat } = useConditionalFormatStore()
   const { hasCellComment } = useCommentStore()
 
   NexcelLogger.grid('debug', 'render', { rows: sheet?.rows.length ?? 0 })
@@ -699,6 +702,7 @@ const VirtualGrid = () => {
       e.preventDefault()
       const rows = text.split(/\r?\n/).filter(r => r.length > 0).map(r => r.split('\t'))
       pasteGrid(activeCell.rowIndex, activeCell.colIndex, rows)
+      useExcelStore.getState().clearCutAfterPaste()
     }
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -822,6 +826,13 @@ const VirtualGrid = () => {
           if (e.ctrlKey || e.metaKey) {
             e.preventDefault()
             copySelection()
+            return
+          }
+          break
+        case 'x':
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault()
+            useExcelStore.getState().cutCells()
             return
           }
           break
@@ -1239,8 +1250,24 @@ const VirtualGrid = () => {
               // Format and comment indicator
               const row = sheet?.rows[actualRowIndex]
               const cellRef = row && field ? `${row.id}:${field.id}` : null
-              const fmt = cellRef ? getFormat(cellRef) : null
+              const manualFmt = cellRef ? getFormat(cellRef) : null
+              const cellRawValue = row && field ? row.fields[field.id] : undefined
+              const conditionalFmt = field ? evaluateConditionalFormat(field.id, cellRawValue) : null
+              // Conditional format is the base; manual format overrides it
+              const fmt = (conditionalFmt || manualFmt)
+                ? { ...conditionalFmt, ...manualFmt } as import('../stores/useCellFormatStore').CellFormat
+                : null
               const hasComment = cellRef ? hasCellComment(cellRef) : false
+
+              // Check if cell is in cut selection (for dashed border visual)
+              const isCut = cutSelection !== null && (() => {
+                const minCutRow = Math.min(cutSelection.startRow, cutSelection.endRow)
+                const maxCutRow = Math.max(cutSelection.startRow, cutSelection.endRow)
+                const minCutCol = Math.min(cutSelection.startCol, cutSelection.endCol)
+                const maxCutCol = Math.max(cutSelection.startCol, cutSelection.endCol)
+                return actualRowIndex >= minCutRow && actualRowIndex <= maxCutRow &&
+                  vc.index >= minCutCol && vc.index <= maxCutCol
+              })()
 
               return (
                 <div
@@ -1262,7 +1289,7 @@ const VirtualGrid = () => {
                     fontWeight: fmt?.bold ? 'bold' : undefined,
                     fontStyle: fmt?.italic ? 'italic' : undefined,
                     textAlign: fmt?.align ?? undefined,
-                    outline: active ? '2px solid #217346' : 'none',
+                    outline: active ? '2px solid #217346' : isCut ? '2px dashed #f59e0b' : 'none',
                     outlineOffset: '-2px',
                     zIndex: active ? 4 : isFrozen ? 3 : 0,
                     display: 'flex',

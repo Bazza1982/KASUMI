@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import Ribbon from './components/Ribbon'
 import CommentPanel from './components/CommentPanel'
+import ConditionalFormatDialog from './components/ConditionalFormatDialog'
 import { useRealtime } from './services/useRealtime'
 import FormulaBar from './components/FormulaBar'
 import SheetTabs from './components/SheetTabs'
@@ -12,22 +13,26 @@ import { useCommentStore } from './stores/useCommentStore'
 import { useCellFormatStore } from './stores/useCellFormatStore'
 import { useExcelStore } from './stores/useExcelStore'
 import { useCellChangeStore } from './stores/useCellChangeStore'
+import { useConditionalFormatStore } from './stores/useConditionalFormatStore'
 import { nexcelAIContext } from './services/AIContextSerializer'
 
 const ExcelShellRoute = () => {
   const [showHelp, setShowHelp] = useState(false)
   const [showCommentPanel, setShowCommentPanel] = useState(false)
+  const [showConditionalFormat, setShowConditionalFormat] = useState(false)
 
   const { load: loadComments } = useCommentStore()
   const { load: loadFormats, setFormatRange } = useCellFormatStore()
   const { load: loadChanges } = useCellChangeStore()
-  const { sheet, selection } = useExcelStore()
+  const { load: loadConditionalFormats } = useConditionalFormatStore()
+  const { sheet, selection, activeCell } = useExcelStore()
 
   // Load persisted data on mount
   useEffect(() => {
     loadComments()
     loadFormats()
     loadChanges()
+    loadConditionalFormats()
   }, [])
 
   // Helper: convert current selection to cellRef strings
@@ -111,6 +116,7 @@ const ExcelShellRoute = () => {
           onToggleComments={() => setShowCommentPanel(p => !p)}
           showCommentPanel={showCommentPanel}
           onFormatSelection={(fmt) => setFormatRange(getSelectedCellRefs(), fmt)}
+          onConditionalFormat={() => setShowConditionalFormat(true)}
         />
         <FormulaBar />
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
@@ -120,6 +126,18 @@ const ExcelShellRoute = () => {
         <StatusBar />
         {showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)} />}
         <CommentPanel isOpen={showCommentPanel} onClose={() => setShowCommentPanel(false)} />
+        {(() => {
+          const colIndex = activeCell?.colIndex ?? 0
+          const field = sheet?.fields[colIndex] ?? null
+          return (
+            <ConditionalFormatDialog
+              fieldId={field?.id ?? 0}
+              fieldName={field?.name ?? 'Column'}
+              isOpen={showConditionalFormat}
+              onClose={() => setShowConditionalFormat(false)}
+            />
+          )
+        })()}
       </div>
     </ErrorBoundary>
   )
