@@ -192,32 +192,8 @@ export const WordoShellRoute: React.FC = () => {
   const openCommentCount = commentStore.getAllComments().filter(c => c.status === 'open').length
   const pendingChangeCount = trackChange.getAllChanges().length
 
-  const WORDO_MENUS = ['File', 'Home', 'Insert', 'Draw', 'Design', 'Layout', 'References', 'Mailings', 'Review', 'View', 'Help']
-  const [activeMenu, setActiveMenu] = useState('Home')
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-      {/* Classic menu bar */}
-      <div style={{
-        display: 'flex', alignItems: 'center',
-        background: '#fff', borderBottom: '1px solid #e2e8f0',
-        padding: '0 8px', height: 28, flexShrink: 0, userSelect: 'none',
-      }}>
-        {WORDO_MENUS.map(m => (
-          <button
-            key={m}
-            onClick={() => setActiveMenu(m)}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              padding: '0 10px', height: '100%', fontSize: 13,
-              color: activeMenu === m ? '#7c3aed' : '#333',
-              fontWeight: activeMenu === m ? 600 : 400,
-              borderBottom: activeMenu === m ? '2px solid #7c3aed' : '2px solid transparent',
-            }}
-          >{m}</button>
-        ))}
-      </div>
-
       <WordoRibbon
         onPageSettings={() => setShowPageSettings(v => !v)}
         onInsertNexcel={() => setShowNexcelDialog(true)}
