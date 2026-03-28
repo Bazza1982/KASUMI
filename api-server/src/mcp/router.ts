@@ -2,6 +2,9 @@ import type { Request, Response } from 'express'
 import { toolRegistry } from './ToolRegistry'
 import { resourceRegistry } from './ResourceRegistry'
 import { promptRegistry } from './PromptRegistry'
+import { resolvePermission, hasPermission, requiredTierForTool, DEV_MODE } from './auth'
+import { auditLog, summariseArgs } from './audit'
+import { serverStats } from './stats'
 import {
   RPC_ERRORS,
   type JsonRpcRequest,
@@ -18,7 +21,7 @@ import {
 
 const SERVER_INFO = {
   name: 'kasumi-mcp-server',
-  version: '1.0.0',
+  version: '2.0.0',
 }
 
 const PROTOCOL_VERSION = '2024-11-05'
@@ -86,7 +89,18 @@ async function dispatch(
       // ── Tool discovery + invocation ──────────────────────────────────────────
 
       case 'tools/list': {
-        return makeSuccess(id, { tools: toolRegistry.list() })
+        const p = params as { includeDeprecated?: boolean } | undefined
+        const tools = p?.includeDeprecated
+          ? toolRegistry.listAll().map(t => ({
+              name: t.name,
+              description: t.description,
+              inputSchema: t.inputSchema,
+              deprecated: t.deprecated ?? false,
+              replacedBy: t.replacedBy,
+            }))
+          : toolRegistry.list()
+        serverStats.incMethod('tools/list')
+        return makeSuccess(id, { tools })
       }
 
       case 'tools/call': {
@@ -102,12 +116,52 @@ async function dispatch(
           return makeError(id, RPC_ERRORS.METHOD_NOT_FOUND.code, `Unknown tool: ${p.name}`)
         }
         const args = p.arguments ?? {}
+        serverStats.incToolCall()
+        serverStats.incMethod(`tool:${p.name}`)
 
+        // ── Permission check ────────────────────────────────────────────────
+        const tier = ctx.permissionTier as import('./auth').PermissionTier | undefined
+        const required = requiredTierForTool(p.name)
+        if (!hasPermission(tier ?? null, required)) {
+          auditLog({
+            sessionId: ctx.sessionId,
+            agentId: ctx.agentId,
+            toolName: p.name,
+            argsSummary: summariseArgs(args),
+            outcome: 'permission_denied',
+            durationMs: 0,
+            errorMessage: `Required tier: ${required}, actual: ${tier ?? 'none'}`,
+          })
+          return makeError(id, RPC_ERRORS.PERMISSION_DENIED.code,
+            `Permission denied: tool "${p.name}" requires "${required}" tier`)
+        }
+
+        // ── Invoke + audit ──────────────────────────────────────────────────
+        const t0 = Date.now()
         try {
           const result = await tool.handler(args, ctx)
+          auditLog({
+            sessionId: ctx.sessionId,
+            agentId: ctx.agentId,
+            toolName: p.name,
+            argsSummary: summariseArgs(args),
+            outcome: result.isError ? 'error' : 'success',
+            durationMs: Date.now() - t0,
+            errorMessage: result.isError ? result.content[0]?.text : undefined,
+          })
           return makeSuccess(id, result)
         } catch (toolErr) {
           const msg = toolErr instanceof Error ? toolErr.message : String(toolErr)
+          auditLog({
+            sessionId: ctx.sessionId,
+            agentId: ctx.agentId,
+            toolName: p.name,
+            argsSummary: summariseArgs(args),
+            outcome: 'error',
+            durationMs: Date.now() - t0,
+            errorMessage: msg,
+          })
+          serverStats.incError()
           return makeSuccess(id, errorResult(`Tool error: ${msg}`))
         }
       }
@@ -173,7 +227,23 @@ async function dispatch(
 
 export async function handleMcpPost(req: Request, res: Response): Promise<void> {
   const sessionId = (req.headers['mcp-session-id'] as string) || `http-${Date.now()}`
-  const ctx: McpRequestContext = { sessionId }
+  const apiKey = (req.headers['x-kasumi-key'] as string) || undefined
+  const agentId = (req.headers['x-kasumi-agent'] as string) || undefined
+  const tier = resolvePermission(apiKey)
+
+  // Reject unknown keys when auth is configured
+  if (!DEV_MODE && !tier) {
+    res.status(401).json(makeError(null, RPC_ERRORS.PERMISSION_DENIED.code, 'Unauthorized: missing or invalid X-Kasumi-Key'))
+    return
+  }
+
+  const ctx: McpRequestContext = {
+    sessionId,
+    agentId,
+    permissionTier: tier ?? undefined,
+  }
+
+  serverStats.incRequest()
 
   let body: unknown
   try {
@@ -185,6 +255,7 @@ export async function handleMcpPost(req: Request, res: Response): Promise<void> 
 
   // Batch requests
   if (Array.isArray(body)) {
+    serverStats.incBatch()
     const responses = await Promise.all(
       body.map(item => handleSingle(item, ctx))
     )
@@ -234,6 +305,7 @@ export function handleMcpSse(req: Request, res: Response): void {
   res.setHeader('X-Accel-Buffering', 'no')
   res.flushHeaders()
 
+  serverStats.incSseConnection()
   // Send initial endpoint event (MCP SSE spec)
   const sessionId = `sse-${Date.now()}-${Math.random().toString(36).slice(2)}`
   res.write(`event: endpoint\ndata: ${JSON.stringify({ sessionId })}\n\n`)

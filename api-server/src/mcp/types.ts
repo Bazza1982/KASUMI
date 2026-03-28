@@ -6,6 +6,8 @@ export interface McpRequestContext {
   sessionId: string
   /** Agent or client identifier (optional — populated if auth is present) */
   agentId?: string
+  /** Resolved permission tier for this request ('read' | 'write' | 'admin') */
+  permissionTier?: string
 }
 
 // ─── JSON-RPC 2.0 ─────────────────────────────────────────────────────────────
