@@ -17,19 +17,53 @@ import { acceptInsert, acceptDelete, rejectInsert, rejectDelete } from './editor
 import { createLogger } from './editor/logger'
 import { onMenuNewDocument } from '../../platform/native/useNativeBridge'
 import { undo as pmUndo, redo as pmRedo } from 'prosemirror-history'
+import { useMcpEvents } from '../../platform/mcp/useMcpEvents'
 
 const log = createLogger('WordoShellRoute')
+
+interface WordoShellRouteProps {
+  autoFocusSectionId?: string | null
+  onSurfaceActivity?: (sectionId: string) => void
+}
 
 // Simple inline comment prompt — no extra dependency
 function promptComment(anchorText: string): string | null {
   return window.prompt(`Add comment to: "${anchorText.slice(0, 50)}${anchorText.length > 50 ? '…' : ''}"`)
 }
 
-export const WordoShellRoute: React.FC = () => {
+export const WordoShellRoute: React.FC<WordoShellRouteProps> = ({
+  autoFocusSectionId = null,
+  onSurfaceActivity,
+}) => {
   const { document: doc, orchestrator, insertNexcelEmbed, loadFromImport, saveNow, triggerAutoSave, focusedSectionId, resetDocument } = useWordoStore()
   const access = useWordoAccessStore()
   const trackChange = useTrackChangeStore()
   const commentStore = useCommentStore()
+
+  // ── Real-time MCP event sync ──────────────────────────────────────────────
+  // When an AI agent mutates wordoStore via MCP tools, broadcast events arrive
+  // here and we reload the document from the API.
+  useMcpEvents(useCallback((e) => {
+    switch (e.event) {
+      case 'wordo:block_updated':
+      case 'wordo:block_inserted':
+      case 'wordo:block_deleted':
+      case 'wordo:content_updated':
+      case 'wordo:document_replaced':
+        // Reload document from api-server
+        fetch('/api/wordo/document')
+          .then(r => r.json())
+          .then(body => {
+            if (body?.data) {
+              loadFromImport({ title: body.data.title, sections: body.data.sections, warnings: [] })
+            }
+          })
+          .catch(() => {/* silent — connection may be unavailable */})
+        break
+      default:
+        break
+    }
+  }, [loadFromImport]))
 
   const [showPageSettings, setShowPageSettings] = useState(false)
   const [showNexcelDialog, setShowNexcelDialog] = useState(false)
@@ -361,6 +395,8 @@ export const WordoShellRoute: React.FC = () => {
               sectionIndex={idx}
               totalSections={doc.sections.length}
               readOnly={!access.canEditBody}
+              autoFocus={section.id === (autoFocusSectionId ?? doc.sections[0]?.id ?? null)}
+              onSurfaceFocus={(sectionId) => onSurfaceActivity?.(sectionId)}
             />
           ))}
         </div>

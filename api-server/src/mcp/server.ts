@@ -4,6 +4,7 @@
  */
 import { registerSystemModule } from './modules/system/index'
 import { registerNexcelModule } from './modules/nexcel/index'
+import { registerWordoModule } from './modules/wordo/index'
 
 let started = false
 
@@ -13,6 +14,7 @@ export function startMcpServer(): void {
 
   registerSystemModule()
   registerNexcelModule()
+  registerWordoModule()
 
   console.log('[MCP] KASUMI MCP server ready')
 }
