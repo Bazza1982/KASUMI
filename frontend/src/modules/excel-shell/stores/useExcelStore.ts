@@ -1,20 +1,22 @@
 import { create } from 'zustand'
 import type { GridCoord, SelectionRange, SheetContext, FieldMeta, RowRecord, TableMeta, FilterRule } from '../types'
-import { MockAdapter } from '../adapters/baserow/MockAdapter'
+import { NexcelApiAdapter } from '../adapters/baserow/NexcelApiAdapter'
 import { BaserowAdapter } from '../adapters/baserow/BaserowAdapter'
 import { renderCellValue } from '../grid/renderers'
 import { objectRegistry, makeObjectId } from '../../../platform/object-registry'
 import { NexcelLogger } from '../services/logger'
 import { useCellChangeStore } from './useCellChangeStore'
 
-// Adapter selection — reads from localStorage so ConnectionPanel can switch at runtime
-const _useMock = typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_use_mock') !== 'false' : true
-const adapter = _useMock
-  ? new MockAdapter()
-  : new BaserowAdapter({
+// Adapter selection — reads from localStorage so ConnectionPanel can switch at runtime.
+// Default: NexcelApiAdapter (api-server is the single source of truth).
+// Set kasumi_use_baserow=true to connect to an external Baserow instance instead.
+const _useBaserow = typeof localStorage !== 'undefined' && localStorage.getItem('kasumi_use_baserow') === 'true'
+const adapter = _useBaserow
+  ? new BaserowAdapter({
       baseUrl: (typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_baserow_url') : null) || 'http://localhost:8000',
       token: (typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_baserow_token') : null) || '',
     })
+  : new NexcelApiAdapter()
 
 const configuredDbId = typeof localStorage !== 'undefined'
   ? parseInt(localStorage.getItem('kasumi_baserow_db_id') || '1', 10)
@@ -574,7 +576,40 @@ export const useExcelStore = create<ExcelState>((set, get) => {
       if (!sheet) return
       NexcelLogger.store('info', 'newSheet', {})
 
-      // Build 26 blank text columns (A-Z)
+      // Reset server state first so api-server stays in sync
+      try {
+        const res = await fetch('/api/nexcel/reset-blank', { method: 'POST' })
+        if (res.ok) {
+          const data = await res.json()
+          const serverFields: FieldMeta[] = data.data?.fields ?? []
+          const rowCount: number = data.data?.rowCount ?? 100
+          const blankRows: RowRecord[] = Array.from({ length: rowCount }, (_, i) => ({
+            id: i + 1,
+            order: `${(i + 1).toFixed(5)}`,
+            fields: {} as Record<number, unknown>,
+          }))
+          set({
+            allRows: blankRows,
+            sheet: { ...sheet, fields: serverFields, rows: blankRows, totalCount: rowCount },
+            undoStack: [],
+            redoStack: [],
+            sortConfig: null,
+            columnFilters: {},
+            searchText: '',
+            selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
+            activeCell: { rowIndex: 0, colIndex: 0 },
+            frozenRowCount: 0,
+            frozenColCount: 0,
+            colWidths: {},
+            zoomLevel: 1.0,
+          })
+          return
+        }
+      } catch {
+        // fall through to local-only reset if server unreachable
+      }
+
+      // Fallback: local-only reset (server unreachable)
       const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
       const blankFields: FieldMeta[] = LETTERS.split('').map((_, i) => ({
         id: i + 1,
@@ -584,8 +619,6 @@ export const useExcelStore = create<ExcelState>((set, get) => {
         primary: i === 0,
         readOnly: false,
       }))
-
-      // 100 empty rows — gives the "large open workbook" feel
       const blankRows: RowRecord[] = Array.from({ length: 100 }, (_, i) => ({
         id: i + 1,
         order: `${(i + 1).toFixed(5)}`,
