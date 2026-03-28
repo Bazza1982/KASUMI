@@ -22,6 +22,105 @@ const configuredDbId = typeof localStorage !== 'undefined'
   ? parseInt(localStorage.getItem('kasumi_baserow_db_id') || '1', 10)
   : 1
 
+export const getVisibleFields = (sheet: SheetContext | null, hiddenFieldIds: number[]): FieldMeta[] => {
+  if (!sheet) return []
+  if (hiddenFieldIds.length === 0) return sheet.fields
+  return sheet.fields.filter(field => !hiddenFieldIds.includes(field.id))
+}
+
+export const getFieldByVisibleCol = (
+  sheet: SheetContext | null,
+  hiddenFieldIds: number[],
+  colIndex: number,
+): FieldMeta | null => getVisibleFields(sheet, hiddenFieldIds)[colIndex] ?? null
+
+export const getActualFieldIndexFromVisibleCol = (
+  sheet: SheetContext | null,
+  hiddenFieldIds: number[],
+  colIndex: number,
+): number => {
+  const field = getFieldByVisibleCol(sheet, hiddenFieldIds, colIndex)
+  if (!sheet || !field) return -1
+  return sheet.fields.findIndex(candidate => candidate.id === field.id)
+}
+
+export const getVisibleColIndexFromFieldIndex = (
+  sheet: SheetContext | null,
+  hiddenFieldIds: number[],
+  fieldIndex: number,
+): number => {
+  if (!sheet) return -1
+  const field = sheet.fields[fieldIndex]
+  if (!field || hiddenFieldIds.includes(field.id)) return -1
+  return getVisibleFields(sheet, hiddenFieldIds).findIndex(candidate => candidate.id === field.id)
+}
+
+export const getSelectionBounds = (selection: SelectionRange | null) => {
+  if (!selection) return null
+  return {
+    minRow: Math.min(selection.startRow, selection.endRow),
+    maxRow: Math.max(selection.startRow, selection.endRow),
+    minCol: Math.min(selection.startCol, selection.endCol),
+    maxCol: Math.max(selection.startCol, selection.endCol),
+  }
+}
+
+export const getTabNavigationTarget = (
+  from: GridCoord,
+  backwards: boolean,
+  selection: SelectionRange | null,
+  rowCount: number,
+  colCount: number,
+): GridCoord => {
+  const bounds = getSelectionBounds(selection)
+  if (bounds && (bounds.minRow !== bounds.maxRow || bounds.minCol !== bounds.maxCol)) {
+    if (backwards) {
+      if (from.colIndex > bounds.minCol) return { rowIndex: from.rowIndex, colIndex: from.colIndex - 1 }
+      if (from.rowIndex > bounds.minRow) return { rowIndex: from.rowIndex - 1, colIndex: bounds.maxCol }
+      return { rowIndex: bounds.maxRow, colIndex: bounds.maxCol }
+    }
+    if (from.colIndex < bounds.maxCol) return { rowIndex: from.rowIndex, colIndex: from.colIndex + 1 }
+    if (from.rowIndex < bounds.maxRow) return { rowIndex: from.rowIndex + 1, colIndex: bounds.minCol }
+    return { rowIndex: bounds.minRow, colIndex: bounds.minCol }
+  }
+
+  if (!backwards) {
+    if (from.colIndex === colCount - 1) {
+      return {
+        rowIndex: Math.min(Math.max(rowCount - 1, 0), from.rowIndex + 1),
+        colIndex: 0,
+      }
+    }
+    return { rowIndex: from.rowIndex, colIndex: Math.min(colCount - 1, from.colIndex + 1) }
+  }
+
+  return { rowIndex: from.rowIndex, colIndex: Math.max(0, from.colIndex - 1) }
+}
+
+export const getEnterNavigationTarget = (
+  from: GridCoord,
+  backwards: boolean,
+  selection: SelectionRange | null,
+  rowCount: number,
+): GridCoord => {
+  const bounds = getSelectionBounds(selection)
+  if (bounds && (bounds.minRow !== bounds.maxRow || bounds.minCol !== bounds.maxCol)) {
+    if (backwards) {
+      if (from.rowIndex > bounds.minRow) return { rowIndex: from.rowIndex - 1, colIndex: from.colIndex }
+      if (from.colIndex > bounds.minCol) return { rowIndex: bounds.maxRow, colIndex: from.colIndex - 1 }
+      return { rowIndex: bounds.maxRow, colIndex: bounds.maxCol }
+    }
+    if (from.rowIndex < bounds.maxRow) return { rowIndex: from.rowIndex + 1, colIndex: from.colIndex }
+    if (from.colIndex < bounds.maxCol) return { rowIndex: bounds.minRow, colIndex: from.colIndex + 1 }
+    return { rowIndex: bounds.minRow, colIndex: bounds.minCol }
+  }
+
+  return {
+    rowIndex: backwards ? Math.max(0, from.rowIndex - 1) : Math.min(Math.max(rowCount - 1, 0), from.rowIndex + 1),
+    colIndex: from.colIndex,
+  }
+}
+
 interface ExcelState {
   // ── Workbook context ───────────────────────────────
   tables: TableMeta[]
@@ -59,6 +158,7 @@ interface ExcelState {
 
   setActiveCell: (rowIndex: number, colIndex: number) => void
   setSelection: (startRow: number, startCol: number, endRow: number, endCol: number) => void
+  setSelectionState: (selection: SelectionRange, activeCell?: GridCoord, anchorCell?: GridCoord) => void
   setAnchor: (rowIndex: number, colIndex: number) => void
 
   enterEdit: (value?: string) => void
@@ -225,6 +325,14 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     set({ sheet: { ...sheet, rows } })
   }
 
+  const getFieldForCol = (rowIndex: number, colIndex: number) => {
+    const { sheet, hiddenFieldIds } = get()
+    if (!sheet) return { field: null, row: null as RowRecord | null }
+    const field = getFieldByVisibleCol(sheet, hiddenFieldIds, colIndex)
+    const row = sheet.rows[rowIndex] ?? null
+    return { field, row }
+  }
+
   return {
     tables: [],
     activeTableId: null,
@@ -313,6 +421,12 @@ export const useExcelStore = create<ExcelState>((set, get) => {
       activeCell: { rowIndex: endRow, colIndex: endCol },
     }),
 
+    setSelectionState: (selection, activeCell, anchorCell) => set({
+      selection,
+      ...(activeCell ? { activeCell } : {}),
+      ...(anchorCell ? { anchorCell } : {}),
+    }),
+
     setAnchor: (rowIndex, colIndex) => set({ anchorCell: { rowIndex, colIndex } }),
 
     // ── Edit mode ─────────────────────────────────────
@@ -339,8 +453,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     commitCell: async (rowIndex: number, colIndex: number, rawValue: unknown) => {
       const { sheet, allRows } = get()
       if (!sheet) return
-      const field = sheet.fields[colIndex]
-      const row = sheet.rows[rowIndex]
+      const { field, row } = getFieldForCol(rowIndex, colIndex)
       if (!field || !row) return
 
       const oldValue = row.fields[field.id]
@@ -371,7 +484,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     },
 
     clearCells: async (coords) => {
-      const { sheet, allRows } = get()
+      const { sheet, allRows, hiddenFieldIds } = get()
       if (!sheet) return
 
       pushUndo()
@@ -381,7 +494,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
       let newAllRows = [...allRows]
 
       for (const { rowIndex, colIndex } of coords) {
-        const field = sheet.fields[colIndex]
+        const field = getFieldByVisibleCol(sheet, hiddenFieldIds, colIndex)
         const row = sheet.rows[rowIndex]
         if (!field || !row || field.readOnly) continue
         newRows[rowIndex] = { ...row, fields: { ...row.fields, [field.id]: '' } }
@@ -400,19 +513,20 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     },
 
     pasteGrid: async (startRow, startCol, data) => {
-      const { sheet } = get()
+      const { sheet, hiddenFieldIds, allRows } = get()
       if (!sheet) return
 
       pushUndo()
 
       const updates: Array<{ rowId: number; fieldId: number; value: unknown }> = []
       const newRows = [...sheet.rows]
+      let newAllRows = [...allRows]
 
       for (let rOff = 0; rOff < data.length; rOff++) {
         for (let cOff = 0; cOff < data[rOff].length; cOff++) {
           const rIdx = startRow + rOff
           const cIdx = startCol + cOff
-          const field = sheet.fields[cIdx]
+          const field = getFieldByVisibleCol(sheet, hiddenFieldIds, cIdx)
           const row = sheet.rows[rIdx]
           if (!field || !row || field.readOnly) continue
           const val = data[rOff][cOff].trim()
@@ -426,11 +540,15 @@ export const useExcelStore = create<ExcelState>((set, get) => {
             source: 'paste',
           })
           newRows[rIdx] = { ...row, fields: { ...row.fields, [field.id]: val } }
+          const allIdx = newAllRows.findIndex(candidate => candidate.id === row.id)
+          if (allIdx >= 0) {
+            newAllRows[allIdx] = { ...newAllRows[allIdx], fields: { ...newAllRows[allIdx].fields, [field.id]: val } }
+          }
           updates.push({ rowId: row.id, fieldId: field.id, value: val })
         }
       }
 
-      set({ sheet: { ...sheet, rows: newRows } })
+      set({ sheet: { ...sheet, rows: newRows }, allRows: newAllRows })
       if (updates.length > 0) {
         await adapter.batchUpdate(sheet.tableId, updates)
       }
@@ -525,18 +643,20 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     // ── Sort ──────────────────────────────────────────
 
     toggleSort: (fieldIndex) => {
-      const { sortConfig } = get()
+      const { sheet, hiddenFieldIds, sortConfig } = get()
+      const actualFieldIndex = getActualFieldIndexFromVisibleCol(sheet, hiddenFieldIds, fieldIndex)
+      if (actualFieldIndex < 0) return
       let newSortConfig: typeof sortConfig
-      if (sortConfig?.fieldIndex === fieldIndex) {
+      if (sortConfig?.fieldIndex === actualFieldIndex) {
         if (sortConfig.direction === 'asc') {
-          newSortConfig = { fieldIndex, direction: 'desc' }
+          newSortConfig = { fieldIndex: actualFieldIndex, direction: 'desc' }
         } else {
           newSortConfig = null
         }
       } else {
-        newSortConfig = { fieldIndex, direction: 'asc' }
+        newSortConfig = { fieldIndex: actualFieldIndex, direction: 'asc' }
       }
-      NexcelLogger.filter('debug', 'toggleSort', { fieldIndex, newSortConfig })
+      NexcelLogger.filter('debug', 'toggleSort', { fieldIndex: actualFieldIndex, newSortConfig })
       set({ sortConfig: newSortConfig })
       applyFiltersAndSort()
     },
@@ -868,12 +988,13 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     // ── Fill handle ───────────────────────────────────
 
     fillRange: async (srcStartRow, srcStartCol, srcEndRow, srcEndCol, dstStartRow, dstStartCol, dstEndRow, dstEndCol) => {
-      const { sheet } = get()
+      const { sheet, hiddenFieldIds, allRows } = get()
       if (!sheet) return
       pushUndo()
 
       const updates: Array<{ rowId: number; fieldId: number; value: unknown }> = []
       const newRows = [...sheet.rows]
+      let newAllRows = [...allRows]
 
       const srcHeight = srcEndRow - srcStartRow + 1
       const srcWidth = srcEndCol - srcStartCol + 1
@@ -884,7 +1005,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
       if (fillingDown) {
         for (let c = dstStartCol; c <= dstEndCol; c++) {
           const srcCol = Math.min(c, srcEndCol)
-          const field = sheet.fields[srcCol]
+          const field = getFieldByVisibleCol(sheet, hiddenFieldIds, srcCol)
           if (!field || field.readOnly) continue
 
           const srcVals = Array.from({ length: srcHeight }, (_, i) => {
@@ -916,6 +1037,10 @@ export const useExcelStore = create<ExcelState>((set, get) => {
               source: 'fill',
             })
             newRows[r] = { ...row, fields: { ...row.fields, [field.id]: fillVal } }
+            const allIdx = newAllRows.findIndex(candidate => candidate.id === row.id)
+            if (allIdx >= 0) {
+              newAllRows[allIdx] = { ...newAllRows[allIdx], fields: { ...newAllRows[allIdx].fields, [field.id]: fillVal } }
+            }
             updates.push({ rowId: row.id, fieldId: field.id, value: fillVal })
           }
         }
@@ -925,12 +1050,12 @@ export const useExcelStore = create<ExcelState>((set, get) => {
           if (!srcRow) continue
 
           const srcVals = Array.from({ length: srcWidth }, (_, i) => {
-            const field = sheet.fields[srcStartCol + i]
+            const field = getFieldByVisibleCol(sheet, hiddenFieldIds, srcStartCol + i)
             return field ? srcRow.fields[field.id] : undefined
           })
 
           for (let c = srcEndCol + 1; c <= dstEndCol; c++) {
-            const field = sheet.fields[c]
+            const field = getFieldByVisibleCol(sheet, hiddenFieldIds, c)
             if (!field || field.readOnly) continue
             const offset = c - srcEndCol - 1
             const fillVal = srcVals[offset % srcWidth]
@@ -944,12 +1069,16 @@ export const useExcelStore = create<ExcelState>((set, get) => {
               source: 'fill',
             })
             newRows[r] = { ...newRows[r], fields: { ...newRows[r].fields, [field.id]: fillVal } }
+            const allIdx = newAllRows.findIndex(candidate => candidate.id === srcRow.id)
+            if (allIdx >= 0) {
+              newAllRows[allIdx] = { ...newAllRows[allIdx], fields: { ...newAllRows[allIdx].fields, [field.id]: fillVal } }
+            }
             updates.push({ rowId: srcRow.id, fieldId: field.id, value: fillVal })
           }
         }
       }
 
-      set({ sheet: { ...sheet, rows: newRows } })
+      set({ sheet: { ...sheet, rows: newRows }, allRows: newAllRows })
       if (updates.length > 0) {
         await adapter.batchUpdate(sheet.tableId, updates)
       }
@@ -1057,9 +1186,9 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     // ── Pure helpers ──────────────────────────────────
 
     getCellDisplay: (rowIndex, colIndex) => {
-      const { sheet } = get()
+      const { sheet, hiddenFieldIds } = get()
       if (!sheet) return ''
-      const field = sheet.fields[colIndex]
+      const field = getFieldByVisibleCol(sheet, hiddenFieldIds, colIndex)
       const row = sheet.rows[rowIndex]
       if (!field || !row) return ''
       const val = row.fields[field.id]
@@ -1067,15 +1196,18 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     },
 
     getCellRaw: (rowIndex, colIndex) => {
-      const { sheet } = get()
+      const { sheet, hiddenFieldIds } = get()
       if (!sheet) return undefined
-      const field = sheet.fields[colIndex]
+      const field = getFieldByVisibleCol(sheet, hiddenFieldIds, colIndex)
       const row = sheet.rows[rowIndex]
       if (!field || !row) return undefined
       return row.fields[field.id]
     },
 
-    getFieldAt: (colIndex) => get().sheet?.fields[colIndex] ?? null,
+    getFieldAt: (colIndex) => {
+      const { sheet, hiddenFieldIds } = get()
+      return getFieldByVisibleCol(sheet, hiddenFieldIds, colIndex)
+    },
     getRowAt: (rowIndex) => get().sheet?.rows[rowIndex] ?? null,
 
     commitCellByField: async (rowIndex: number, fieldId: number, rawValue: unknown) => {

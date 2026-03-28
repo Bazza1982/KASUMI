@@ -11,22 +11,28 @@ import ShortcutsHelp from './components/ShortcutsHelp'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { useCommentStore } from './stores/useCommentStore'
 import { useCellFormatStore } from './stores/useCellFormatStore'
-import { useExcelStore } from './stores/useExcelStore'
+import { getFieldByVisibleCol, useExcelStore } from './stores/useExcelStore'
 import { useCellChangeStore } from './stores/useCellChangeStore'
 import { useConditionalFormatStore } from './stores/useConditionalFormatStore'
 import { nexcelAIContext } from './services/AIContextSerializer'
 import { useMcpEvents } from '../../platform/mcp/useMcpEvents'
 
-const ExcelShellRoute = () => {
+interface ExcelShellRouteProps {
+  autoFocusTarget?: 'grid' | 'formula-bar'
+  onSurfaceActivity?: (target: 'grid' | 'formula-bar') => void
+}
+
+const ExcelShellRoute = ({ autoFocusTarget = 'grid', onSurfaceActivity }: ExcelShellRouteProps) => {
   const [showHelp, setShowHelp] = useState(false)
   const [showCommentPanel, setShowCommentPanel] = useState(false)
   const [showConditionalFormat, setShowConditionalFormat] = useState(false)
+  const [gridFocusSignal, setGridFocusSignal] = useState(0)
 
   const { load: loadComments } = useCommentStore()
   const { load: loadFormats, setFormatRange } = useCellFormatStore()
   const { load: loadChanges } = useCellChangeStore()
   const { load: loadConditionalFormats } = useConditionalFormatStore()
-  const { sheet, selection, activeCell, undo, redo, deduplicateRows, loadSheet, loadTables } = useExcelStore()
+  const { sheet, hiddenFieldIds, selection, activeCell, undo, redo, deduplicateRows, loadSheet, loadTables } = useExcelStore()
 
   const handlePrint = () => window.print()
 
@@ -73,7 +79,7 @@ const ExcelShellRoute = () => {
     for (let r = minRow; r <= maxRow; r++) {
       for (let c = minCol; c <= maxCol; c++) {
         const row = sheet.rows[r]
-        const field = sheet.fields[c]
+        const field = getFieldByVisibleCol(sheet, hiddenFieldIds, c)
         if (row && field) refs.push(`${row.id}:${field.id}`)
       }
     }
@@ -156,9 +162,22 @@ const ExcelShellRoute = () => {
           onPrint={handlePrint}
           onDeduplicate={deduplicateRows}
         />
-        <div className="nexcel-no-print"><FormulaBar /></div>
+        <div className="nexcel-no-print">
+          <FormulaBar
+            autoFocus={autoFocusTarget === 'formula-bar'}
+            onSurfaceFocus={() => onSurfaceActivity?.('formula-bar')}
+            onNavigateToGrid={() => {
+              onSurfaceActivity?.('grid')
+              setGridFocusSignal(signal => signal + 1)
+            }}
+          />
+        </div>
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-          <VirtualGrid />
+          <VirtualGrid
+            autoFocus={autoFocusTarget === 'grid'}
+            focusSignal={gridFocusSignal}
+            onSurfaceFocus={() => onSurfaceActivity?.('grid')}
+          />
         </div>
         <div className="nexcel-no-print"><SheetTabs /></div>
         <div className="nexcel-no-print"><StatusBar /></div>
@@ -166,7 +185,7 @@ const ExcelShellRoute = () => {
         <CommentPanel isOpen={showCommentPanel} onClose={() => setShowCommentPanel(false)} />
         {(() => {
           const colIndex = activeCell?.colIndex ?? 0
-          const field = sheet?.fields[colIndex] ?? null
+          const field = getFieldByVisibleCol(sheet, hiddenFieldIds, colIndex)
           return (
             <ConditionalFormatDialog
               fieldId={field?.id ?? 0}

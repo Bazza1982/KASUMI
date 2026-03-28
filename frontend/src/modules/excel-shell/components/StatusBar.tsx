@@ -1,10 +1,11 @@
 import React, { useMemo } from 'react'
-import { useExcelStore } from '../stores/useExcelStore'
+import { getFieldByVisibleCol, useExcelStore } from '../stores/useExcelStore'
 
 const StatusBar = () => {
   const statusText = useExcelStore(s => s.statusText)
   const selection = useExcelStore(s => s.selection)
   const sheet = useExcelStore(s => s.sheet)
+  const hiddenFieldIds = useExcelStore(s => s.hiddenFieldIds)
   const searchText = useExcelStore(s => s.searchText)
   const sortConfig = useExcelStore(s => s.sortConfig)
 
@@ -23,7 +24,7 @@ const StatusBar = () => {
       const row = sheet.rows[r]
       if (!row) continue
       for (let c = minCol; c <= maxCol; c++) {
-        const field = sheet.fields[c]
+        const field = getFieldByVisibleCol(sheet, hiddenFieldIds, c)
         if (!field || field.type !== 'number') continue
         const val = row.fields[field.id]
         const n = parseFloat(String(val))

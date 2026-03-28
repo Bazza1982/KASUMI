@@ -19,6 +19,8 @@ interface SectionEditorProps {
   sectionIndex: number     // 0-based — used for page number calculation
   totalSections: number
   readOnly?: boolean
+  autoFocus?: boolean
+  onSurfaceFocus?: (sectionId: string) => void
 }
 
 const MM_TO_PX = 3.7795275591
@@ -26,7 +28,7 @@ const mmToPx = (mm: number) => Math.round(mm * MM_TO_PX)
 
 export const SectionEditor: React.FC<SectionEditorProps> = ({
   sectionId, orchestrator, pageStyle, watermark,
-  sectionIndex, totalSections, readOnly = false,
+  sectionIndex, totalSections, readOnly = false, autoFocus = false, onSurfaceFocus,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null)
   const viewRef  = useRef<EditorView | null>(null)
@@ -69,6 +71,7 @@ export const SectionEditor: React.FC<SectionEditorProps> = ({
       setFocused(true)
       orchestrator.setFocusedSection(sectionId)
       useWordoStore.getState().setFocusedSection(sectionId)
+      onSurfaceFocus?.(sectionId)
     }
     const onFocusOut = (e: FocusEvent) => {
       // If focus moved to another element inside the editor section, ignore
@@ -88,8 +91,16 @@ export const SectionEditor: React.FC<SectionEditorProps> = ({
     mountRef.current.addEventListener('focusout', onFocusOut)
 
     return () => { view.destroy(); viewRef.current = null }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sectionId])
+  }, [sectionId, orchestrator, readOnly, onSurfaceFocus])
+
+  useEffect(() => {
+    if (!autoFocus || readOnly) return
+    const frame = window.requestAnimationFrame(() => {
+      viewRef.current?.focus()
+      onSurfaceFocus?.(sectionId)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [autoFocus, readOnly, sectionId, onSurfaceFocus])
 
   return (
     <div

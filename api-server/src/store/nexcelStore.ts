@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import type {
   FieldMeta, RowRecord, CellFormat, ConditionalFormatRule,
-  SortConfig, FilterRule, SelectOption,
+  SortConfig, FilterRule, SelectOption, MergedCell, Hyperlink, NamedRange,
 } from '../types'
 
 // ─── MOCK DATA GENERATION ────────────────────────────────────────────────────
@@ -84,6 +84,17 @@ class NexcelStore {
   conditionalRules: ConditionalFormatRule[] = []
   accessMode: 'data-entry' | 'analyst' | 'admin' = 'analyst'
   activeShell: 'nexcel' | 'wordo' = 'nexcel'
+
+  // ── Phase 4 model additions ──────────────────────────────────────────────
+  sheetName: string = 'Sheet 1'
+  colWidths: Record<number, number> = {}          // fieldId → px width
+  rowHeights: Record<number, number> = {}         // rowId → px height
+  frozenRows: number = 0
+  frozenCols: number = 0
+  mergedCells: MergedCell[] = []
+  hyperlinks: Record<string, Hyperlink> = {}      // "rowId:fieldId" → Hyperlink
+  namedRanges: NamedRange[] = []
+  formulas: Record<string, string> = {}           // "rowId:fieldId" → formula string
 
   // clipboard (server-side copy state)
   clipboard: { rows: RowRecord[]; fieldIds: number[] } | null = null
@@ -288,12 +299,96 @@ class NexcelStore {
     return result
   }
 
+  // ── Phase 4: dimension + layout methods ─────────────────────────────────
+
+  setColWidth(fieldId: number, width: number): void {
+    this.colWidths[fieldId] = Math.min(500, Math.max(20, width))
+  }
+
+  setRowHeight(rowId: number, height: number): void {
+    this.rowHeights[rowId] = Math.min(300, Math.max(16, height))
+  }
+
+  setFrozen(rows: number, cols: number): void {
+    this.frozenRows = Math.max(0, rows)
+    this.frozenCols = Math.max(0, cols)
+  }
+
+  // ── Phase 4: merge cells ─────────────────────────────────────────────────
+
+  mergeCells(startRow: number, startCol: number, endRow: number, endCol: number): MergedCell {
+    // Remove any existing merges that overlap
+    this.mergedCells = this.mergedCells.filter(m =>
+      m.endRow < startRow || m.startRow > endRow ||
+      m.endCol < startCol || m.startCol > endCol
+    )
+    const merge: MergedCell = { startRow, startCol, endRow, endCol }
+    this.mergedCells.push(merge)
+    return merge
+  }
+
+  unmergeCells(startRow: number, startCol: number): boolean {
+    const idx = this.mergedCells.findIndex(m => m.startRow === startRow && m.startCol === startCol)
+    if (idx === -1) return false
+    this.mergedCells.splice(idx, 1)
+    return true
+  }
+
+  // ── Phase 4: hyperlinks ──────────────────────────────────────────────────
+
+  setHyperlink(rowId: number, fieldId: number, url: string, label?: string): Hyperlink {
+    const hl: Hyperlink = { url, label }
+    this.hyperlinks[`${rowId}:${fieldId}`] = hl
+    return hl
+  }
+
+  removeHyperlink(rowId: number, fieldId: number): boolean {
+    const key = `${rowId}:${fieldId}`
+    if (!this.hyperlinks[key]) return false
+    delete this.hyperlinks[key]
+    return true
+  }
+
+  // ── Phase 4: named ranges ────────────────────────────────────────────────
+
+  addNamedRange(name: string, range: string): NamedRange {
+    const existing = this.namedRanges.findIndex(n => n.name.toLowerCase() === name.toLowerCase())
+    if (existing >= 0) this.namedRanges[existing].range = range
+    else this.namedRanges.push({ name, range })
+    return { name, range }
+  }
+
+  deleteNamedRange(name: string): boolean {
+    const idx = this.namedRanges.findIndex(n => n.name.toLowerCase() === name.toLowerCase())
+    if (idx === -1) return false
+    this.namedRanges.splice(idx, 1)
+    return true
+  }
+
+  // ── Phase 4: formulas ────────────────────────────────────────────────────
+
+  setFormula(rowId: number, fieldId: number, formula: string): void {
+    this.formulas[`${rowId}:${fieldId}`] = formula
+    // Store formula display string in the cell value as well
+    this.updateRow(rowId, { [fieldId]: formula })
+  }
+
+  getFormula(rowId: number, fieldId: number): string | null {
+    return this.formulas[`${rowId}:${fieldId}`] ?? null
+  }
+
+  // ── Phase 4: sheet rename ────────────────────────────────────────────────
+
+  renameSheet(name: string): void {
+    this.sheetName = name.trim() || 'Sheet 1'
+  }
+
   /** Reset to a blank Excel-like workbook: 26 unnamed text columns, 100 empty rows. */
   resetToBlank(): void {
     const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-    this.fields = LETTERS.split('').map((letter, i) => ({
+    this.fields = LETTERS.split('').map((_, i) => ({
       id: i + 1,
-      name: '',          // empty name → VirtualGrid shows only the letter
+      name: '',
       type: 'text' as const,
       order: i + 1,
       primary: i === 0,
@@ -311,6 +406,16 @@ class NexcelStore {
     this.conditionalRules = []
     this.undoStack = []
     this.redoStack = []
+    // Reset Phase 4 state too
+    this.sheetName = 'Sheet 1'
+    this.colWidths = {}
+    this.rowHeights = {}
+    this.frozenRows = 0
+    this.frozenCols = 0
+    this.mergedCells = []
+    this.hyperlinks = {}
+    this.namedRanges = []
+    this.formulas = {}
   }
 
   exportCsv(): string {

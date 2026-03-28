@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react'
 import { Copy, Clipboard, Scissors, Bold, Italic, Plus, Trash2, Download, FileSpreadsheet, Upload, Columns, Settings, HelpCircle, MessageSquare, AlignLeft, AlignCenter, AlignRight, Filter, Undo2, Redo2, SortAsc, SortDesc, FilePlus, Printer, Layers, Lock } from 'lucide-react'
-import { useExcelStore } from '../stores/useExcelStore'
+import { getFieldByVisibleCol, getVisibleColIndexFromFieldIndex, useExcelStore } from '../stores/useExcelStore'
 import { useAccessStore } from '../stores/useAccessStore'
 import { useCellFormatStore } from '../stores/useCellFormatStore'
 import { AccessModeSelector } from './AccessModeSelector'
@@ -34,7 +34,7 @@ const TAB_GROUPS: Record<string, string[]> = {
 const ZOOM_LEVELS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
 
 const Ribbon: React.FC<RibbonProps> = ({ onHelp, onToggleComments, showCommentPanel, onFormatSelection, onConditionalFormat, activeTab = 'Home', onPrint, onDeduplicate }) => {
-  const { addRow, deleteSelectedRows, exportToCsv, exportToXlsx, importFromCsv, importFromXlsx, searchText, setSearchText, frozenColCount, toggleFreezeFirstCol, frozenRowCount, toggleFreezeFirstRow, cutCells, clearCutAfterPaste, pasteGrid, undo, redo, newSheet, addColumn, deleteColumn, activeCell, sheet, toggleSort, sortConfig, zoomLevel, setZoomLevel } = useExcelStore()
+  const { addRow, deleteSelectedRows, exportToCsv, exportToXlsx, importFromCsv, importFromXlsx, searchText, setSearchText, frozenColCount, toggleFreezeFirstCol, frozenRowCount, toggleFreezeFirstRow, cutCells, clearCutAfterPaste, pasteGrid, undo, redo, newSheet, addColumn, deleteColumn, activeCell, sheet, hiddenFieldIds, toggleSort, sortConfig, zoomLevel, setZoomLevel } = useExcelStore()
   const { canAddRows, canDeleteRows, canImport, canExport } = useAccessStore()
   const { getFormat } = useCellFormatStore()
 
@@ -42,10 +42,11 @@ const Ribbon: React.FC<RibbonProps> = ({ onHelp, onToggleComments, showCommentPa
   const activeCellRef = (() => {
     if (!activeCell || !sheet) return null
     const row = sheet.rows[activeCell.rowIndex]
-    const field = sheet.fields[activeCell.colIndex]
+    const field = getFieldByVisibleCol(sheet, hiddenFieldIds, activeCell.colIndex)
     return row && field ? `${row.id}:${field.id}` : null
   })()
   const activeCellFormat = activeCellRef ? getFormat(activeCellRef) : null
+  const activeSortVisibleCol = sortConfig ? getVisibleColIndexFromFieldIndex(sheet, hiddenFieldIds, sortConfig.fieldIndex) : -1
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const xlsxInputRef = useRef<HTMLInputElement>(null)
@@ -87,7 +88,7 @@ const Ribbon: React.FC<RibbonProps> = ({ onHelp, onToggleComments, showCommentPa
 
   const handleDeleteColumn = () => {
     if (!activeCell || !sheet) return
-    const field = sheet.fields[activeCell.colIndex]
+    const field = getFieldByVisibleCol(sheet, hiddenFieldIds, activeCell.colIndex)
     if (!field) return
     if (window.confirm(`Delete column "${field.name}"?`)) deleteColumn(field.id)
   }
@@ -95,7 +96,7 @@ const Ribbon: React.FC<RibbonProps> = ({ onHelp, onToggleComments, showCommentPa
   const handleSortAsc = () => {
     if (!activeCell) return
     const { sortConfig: sc } = useExcelStore.getState()
-    if (sc?.fieldIndex === activeCell.colIndex && sc.direction === 'asc') return
+    if (activeSortVisibleCol === activeCell.colIndex && sc?.direction === 'asc') return
     toggleSort(activeCell.colIndex)
     if (useExcelStore.getState().sortConfig?.direction === 'desc') toggleSort(activeCell.colIndex)
   }
@@ -103,10 +104,10 @@ const Ribbon: React.FC<RibbonProps> = ({ onHelp, onToggleComments, showCommentPa
   const handleSortDesc = () => {
     if (!activeCell) return
     const sc = useExcelStore.getState().sortConfig
-    if (sc?.fieldIndex === activeCell.colIndex && sc.direction === 'desc') return
+    if (activeSortVisibleCol === activeCell.colIndex && sc?.direction === 'desc') return
     // toggleSort cycles: null → asc → desc → null; get to desc
     const cur = useExcelStore.getState().sortConfig
-    if (!cur || cur.fieldIndex !== activeCell.colIndex) {
+    if (!cur || activeSortVisibleCol !== activeCell.colIndex) {
       toggleSort(activeCell.colIndex) // → asc
       toggleSort(activeCell.colIndex) // → desc
     } else if (cur.direction === 'asc') {
@@ -114,7 +115,7 @@ const Ribbon: React.FC<RibbonProps> = ({ onHelp, onToggleComments, showCommentPa
     }
   }
 
-  const currentSortDir = (activeCell && sortConfig?.fieldIndex === activeCell.colIndex) ? sortConfig.direction : null
+  const currentSortDir = (activeCell && activeSortVisibleCol === activeCell.colIndex) ? sortConfig?.direction ?? null : null
 
   const groups = [
     {

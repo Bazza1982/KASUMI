@@ -5,7 +5,7 @@ const SHORTCUTS = [
   { category: 'Navigation', items: [
     ['Arrow Keys', 'Move active cell'],
     ['Tab / Shift+Tab', 'Move right / left'],
-    ['Enter', 'Move down (or enter edit)'],
+    ['Enter / Shift+Enter', 'Move down / up'],
     ['Ctrl+Home', 'Go to first cell'],
     ['Ctrl+End', 'Go to last cell'],
     ['Home', 'Go to first column in row'],
@@ -16,9 +16,10 @@ const SHORTCUTS = [
     ['Ctrl+A', 'Select all'],
     ['Shift+Click', 'Select range'],
     ['Click+Drag', 'Select range'],
+    ['Click row/column header', 'Select entire row / column'],
   ]},
   { category: 'Editing', items: [
-    ['F2 / Enter', 'Enter edit mode'],
+    ['F2 / Double-click', 'Enter edit mode'],
     ['Escape', 'Cancel edit'],
     ['Delete / Backspace', 'Clear selected cells'],
     ['Any key', 'Start editing (replaces value)'],
@@ -33,7 +34,6 @@ const SHORTCUTS = [
     ['Ctrl+Y / Ctrl+Shift+Z', 'Redo'],
   ]},
   { category: 'View', items: [
-    ['Click column header', 'Sort by column'],
     ['Right-click column header', 'Column options'],
     ['Right-click cell', 'Row options'],
     ['Ctrl+/', 'Show this help'],
@@ -79,7 +79,7 @@ const ShortcutsHelp: React.FC<Props> = ({ onClose }) => (
         ))}
       </div>
       <div style={{ marginTop: 16, padding: '8px 12px', backgroundColor: '#f3f2f1', borderRadius: 4, fontSize: 12, color: '#666' }}>
-        💡 Tip: Click column headers to sort. Right-click for options. Drag the green fill handle to fill a range.
+        💡 Tip: Click row or column headers to select them, right-click column headers for sort/options, and drag the green fill handle to fill a range.
       </div>
     </div>
   </div>

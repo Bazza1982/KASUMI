@@ -7,10 +7,36 @@ import './index.css'
 const SHELL_KEY = 'kasumi_active_shell'
 const SPLASH_KEY = 'kasumi_splash_seen'
 const POS_KEY = 'kasumi_switcher_pos'
+const SURFACE_KEY = 'kasumi_surface_session'
+
+type SurfaceSessionState = {
+  nexcel: {
+    target: 'grid' | 'formula-bar'
+  }
+  wordo: {
+    sectionId: string | null
+  }
+}
+
+const DEFAULT_SURFACE_SESSION: SurfaceSessionState = {
+  nexcel: { target: 'grid' },
+  wordo: { sectionId: null },
+}
 
 function App() {
   const saved = (typeof localStorage !== 'undefined' ? localStorage.getItem(SHELL_KEY) : null) as KasumiShell | null
   const [shell, setShell] = useState<KasumiShell>(saved ?? 'nexcel')
+  const [surfaceSession, setSurfaceSession] = useState<SurfaceSessionState>(() => {
+    if (typeof localStorage === 'undefined') return DEFAULT_SURFACE_SESSION
+    try {
+      return {
+        ...DEFAULT_SURFACE_SESSION,
+        ...JSON.parse(localStorage.getItem(SURFACE_KEY) || 'null'),
+      }
+    } catch {
+      return DEFAULT_SURFACE_SESSION
+    }
+  })
 
   const [showSplash, setShowSplash] = useState(() =>
     typeof sessionStorage !== 'undefined' && !sessionStorage.getItem(SPLASH_KEY)
@@ -35,6 +61,10 @@ function App() {
     localStorage.setItem(SHELL_KEY, s)
     setShell(s)
   }
+
+  useEffect(() => {
+    localStorage.setItem(SURFACE_KEY, JSON.stringify(surfaceSession))
+  }, [surfaceSession])
 
   const onMouseDown = (e: React.MouseEvent) => {
     // Only drag on the wordmark handle, not the buttons
@@ -95,8 +125,28 @@ function App() {
         ))}
       </div>
 
-      {shell === 'nexcel' && <ExcelShellRoute />}
-      {shell === 'wordo' && <WordoShellRoute />}
+      {shell === 'nexcel' && (
+        <ExcelShellRoute
+          autoFocusTarget={surfaceSession.nexcel.target}
+          onSurfaceActivity={(target) => {
+            setSurfaceSession(prev => ({
+              ...prev,
+              nexcel: { target },
+            }))
+          }}
+        />
+      )}
+      {shell === 'wordo' && (
+        <WordoShellRoute
+          autoFocusSectionId={surfaceSession.wordo.sectionId}
+          onSurfaceActivity={(sectionId) => {
+            setSurfaceSession(prev => ({
+              ...prev,
+              wordo: { sectionId },
+            }))
+          }}
+        />
+      )}
     </div>
   )
 }

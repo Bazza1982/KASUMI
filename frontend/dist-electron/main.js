@@ -2,7 +2,62 @@ import { app, BrowserWindow, dialog, Menu, ipcMain, shell } from "electron";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 const __dirname$1 = path.dirname(fileURLToPath(import.meta.url));
+function isWsl() {
+  try {
+    const version = fs.readFileSync("/proc/version", "utf-8").toLowerCase();
+    return version.includes("microsoft") || version.includes("wsl");
+  } catch {
+    return false;
+  }
+}
+function getWindowsHomePath() {
+  try {
+    const userProfile = process.env["USERPROFILE"];
+    if (userProfile) {
+      const converted = userProfile.replace(/\\/g, "/").replace(/^([A-Za-z]):/, (_m, drive) => `/mnt/${drive.toLowerCase()}`);
+      if (fs.existsSync(converted)) return converted;
+    }
+    const linuxUser = os.userInfo().username;
+    const candidate = `/mnt/c/Users/${linuxUser}`;
+    if (fs.existsSync(candidate)) return candidate;
+    if (fs.existsSync("/mnt/c/Users")) return "/mnt/c/Users";
+  } catch {
+  }
+  return os.homedir();
+}
+function ensureWindowsGtkBookmarks() {
+  try {
+    const bookmarkFile = path.join(os.homedir(), ".config", "gtk-3.0", "bookmarks");
+    const existing = fs.existsSync(bookmarkFile) ? fs.readFileSync(bookmarkFile, "utf-8") : "";
+    const toAdd = [];
+    const winHome = getWindowsHomePath();
+    const winHomeUri = `file://${winHome}`;
+    if (!existing.includes(winHomeUri)) {
+      const label = `Windows (${path.basename(winHome)})`;
+      toAdd.push(`${winHomeUri} ${label}`);
+    }
+    const commonFolders = [
+      { rel: "Desktop", label: "Windows Desktop" },
+      { rel: "Documents", label: "Windows Documents" },
+      { rel: "Downloads", label: "Windows Downloads" }
+    ];
+    for (const { rel, label } of commonFolders) {
+      const fullPath = path.join(winHome, rel);
+      const uri = `file://${fullPath}`;
+      if (fs.existsSync(fullPath) && !existing.includes(uri)) {
+        toAdd.push(`${uri} ${label}`);
+      }
+    }
+    if (toAdd.length === 0) return;
+    fs.mkdirSync(path.dirname(bookmarkFile), { recursive: true });
+    fs.appendFileSync(bookmarkFile, "\n" + toAdd.join("\n") + "\n", "utf-8");
+  } catch {
+  }
+}
+const wslDefaultPath = isWsl() ? getWindowsHomePath() : void 0;
+if (wslDefaultPath) ensureWindowsGtkBookmarks();
 const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
 const RENDERER_DIST = path.join(__dirname$1, "../dist");
 let mainWindow = null;
@@ -20,8 +75,8 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false
     },
-    // Hide default menu bar — we build our own via Menu.setApplicationMenu
-    autoHideMenuBar: false,
+    // Hide native menu bar — we use a custom in-app menu row instead
+    autoHideMenuBar: true,
     show: false
     // show only after ready-to-show to prevent blank flash
   });
@@ -53,7 +108,7 @@ app.on("window-all-closed", () => {
 });
 function buildMenu() {
   const isMac = process.platform === "darwin";
-  const template = [
+  [
     // macOS app menu
     ...isMac ? [{ label: app.name, submenu: [
       { role: "about" },
@@ -160,14 +215,15 @@ KASUMI Nexcel + KASUMI WORDO`
       ]
     }
   ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  Menu.setApplicationMenu(null);
 }
 async function handleImportDocx() {
   if (!mainWindow) return;
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Import .docx",
     filters: [{ name: "Word Document", extensions: ["docx"] }],
-    properties: ["openFile"]
+    properties: ["openFile"],
+    defaultPath: wslDefaultPath
   });
   if (result.canceled || !result.filePaths[0]) return;
   const filePath = result.filePaths[0];
@@ -182,7 +238,8 @@ async function handleImportCsv() {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Import CSV",
     filters: [{ name: "CSV", extensions: ["csv"] }],
-    properties: ["openFile"]
+    properties: ["openFile"],
+    defaultPath: wslDefaultPath
   });
   if (result.canceled || !result.filePaths[0]) return;
   const text = fs.readFileSync(result.filePaths[0], "utf-8");
@@ -191,7 +248,7 @@ async function handleImportCsv() {
 ipcMain.handle("dialog:save-file", async (_event, args) => {
   if (!mainWindow) return { canceled: true };
   const result = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: args.defaultName,
+    defaultPath: wslDefaultPath ? path.join(wslDefaultPath, args.defaultName) : args.defaultName,
     filters: args.filters
   });
   if (result.canceled || !result.filePath) return { canceled: true };

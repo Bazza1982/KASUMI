@@ -39,6 +39,24 @@ export interface CellFormat {
   align?: 'left' | 'center' | 'right'
   bgColor?: string
   textColor?: string
+  numberFormat?: string
+}
+
+export interface MergedCell {
+  startRow: number   // row id (1-based)
+  startCol: number   // field id (1-based)
+  endRow: number
+  endCol: number
+}
+
+export interface Hyperlink {
+  url: string
+  label?: string
+}
+
+export interface NamedRange {
+  name: string
+  range: string   // A1 notation, e.g. "A1:C5"
 }
 
 export interface ConditionalFormatRule {
