@@ -8,6 +8,7 @@ import { notFound, errorHandler } from './middleware/respond'
 import { openApiSpec } from './openapi/spec'
 import { startMcpServer } from './mcp/server'
 import { handleMcpPost, handleMcpSse } from './mcp/router'
+import { attachWsServer } from './mcp/services/WsServer'
 
 const app = express()
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001
@@ -52,7 +53,7 @@ app.use(errorHandler)
 // ── Start ─────────────────────────────────────────────────────────────────────
 startMcpServer()
 
-app.listen(PORT, () => {
+const httpServer = app.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════╗
 ║         KASUMI AI-Native API Server           ║
@@ -62,8 +63,12 @@ app.listen(PORT, () => {
 ║  Health:  http://localhost:${PORT}/api/health     ║
 ║  MCP:     http://localhost:${PORT}/mcp            ║
 ║  MCP SSE: http://localhost:${PORT}/mcp/sse        ║
+║  WS:      ws://localhost:${PORT}/mcp/events       ║
 ╚═══════════════════════════════════════════════╝
   `.trim())
 })
+
+// Attach WebSocket server for real-time frontend updates
+attachWsServer(httpServer)
 
 export default app

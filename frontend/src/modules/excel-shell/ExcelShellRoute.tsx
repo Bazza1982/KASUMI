@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import Ribbon from './components/Ribbon'
 import CommentPanel from './components/CommentPanel'
 import ConditionalFormatDialog from './components/ConditionalFormatDialog'
@@ -15,6 +15,7 @@ import { useExcelStore } from './stores/useExcelStore'
 import { useCellChangeStore } from './stores/useCellChangeStore'
 import { useConditionalFormatStore } from './stores/useConditionalFormatStore'
 import { nexcelAIContext } from './services/AIContextSerializer'
+import { useMcpEvents } from '../../platform/mcp/useMcpEvents'
 
 const ExcelShellRoute = () => {
   const [showHelp, setShowHelp] = useState(false)
@@ -25,7 +26,7 @@ const ExcelShellRoute = () => {
   const { load: loadFormats, setFormatRange } = useCellFormatStore()
   const { load: loadChanges } = useCellChangeStore()
   const { load: loadConditionalFormats } = useConditionalFormatStore()
-  const { sheet, selection, activeCell, undo, redo, deduplicateRows } = useExcelStore()
+  const { sheet, selection, activeCell, undo, redo, deduplicateRows, loadSheet, loadTables } = useExcelStore()
 
   const handlePrint = () => window.print()
 
@@ -36,6 +37,30 @@ const ExcelShellRoute = () => {
     loadChanges()
     loadConditionalFormats()
   }, [])
+
+  // ── Real-time MCP event sync ──────────────────────────────────────────────
+  // When an AI agent mutates nexcelStore via MCP write tools, the server
+  // broadcasts a WebSocket event. We reload the sheet from the API so the
+  // grid reflects the change immediately.
+  useMcpEvents(useCallback((e) => {
+    switch (e.event) {
+      case 'nexcel:cells_updated':
+      case 'nexcel:rows_inserted':
+      case 'nexcel:rows_deleted':
+      case 'nexcel:sheet_sorted':
+      case 'nexcel:format_updated':
+      case 'nexcel:column_width_changed':
+        // Reload current sheet from api-server (single source of truth)
+        if (sheet?.tableId) loadSheet(sheet.tableId)
+        break
+      case 'nexcel:sheet_reset':
+        // Full reload including tables
+        loadTables()
+        break
+      default:
+        break
+    }
+  }, [sheet?.tableId, loadSheet, loadTables]))
 
   // Helper: convert current selection to cellRef strings
   const getSelectedCellRefs = (): string[] => {
