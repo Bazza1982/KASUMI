@@ -299,10 +299,13 @@ class NexcelStore {
       primary: i === 0,
       readOnly: false,
     }))
+    const blankNow = new Date().toISOString()
     this.rows = Array.from({ length: 100 }, (_, i) => ({
       id: i + 1,
       order: (i + 1).toFixed(5),
       fields: {} as Record<number, unknown>,
+      createdAt: blankNow,
+      updatedAt: blankNow,
     }))
     this.formats = new Map()
     this.conditionalRules = []
