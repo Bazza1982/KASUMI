@@ -1,5 +1,7 @@
 import { toolRegistry } from '../../ToolRegistry'
+import { promptRegistry } from '../../PromptRegistry'
 import type { McpToolDefinition } from '../../types'
+import { systemPrompts } from './prompts'
 
 const systemTools: McpToolDefinition[] = [
   {
@@ -13,8 +15,9 @@ const systemTools: McpToolDefinition[] = [
         status: 'ok',
         server: 'kasumi-mcp-server',
         version: '1.0.0',
-        modules: ['nexcel', 'system'],
+        modules: ['nexcel', 'wordo', 'cross', 'system'],
         toolCount: toolRegistry.size(),
+        promptCount: promptRegistry.size(),
         timestamp: new Date().toISOString(),
       }, null, 2) }],
     }),
@@ -54,5 +57,6 @@ const systemTools: McpToolDefinition[] = [
 
 export function registerSystemModule(): void {
   toolRegistry.registerAll(systemTools)
-  console.log(`[MCP] system module registered: ${systemTools.length} tools`)
+  promptRegistry.registerAll(systemPrompts)
+  console.log(`[MCP] system module registered: ${systemTools.length} tools, ${systemPrompts.length} prompts`)
 }

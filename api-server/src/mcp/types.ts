@@ -150,6 +150,34 @@ export interface McpResourceListEntry {
   mimeType?: string
 }
 
+// ─── Prompt definitions ───────────────────────────────────────────────────────
+
+export interface McpPromptArgument {
+  name: string
+  description?: string
+  required?: boolean
+}
+
+export interface McpPromptDefinition {
+  name: string
+  module: string
+  version: string
+  description: string
+  arguments?: McpPromptArgument[]
+  build: (args: Record<string, string>) => Promise<McpPromptMessage[]>
+}
+
+export interface McpPromptMessage {
+  role: 'user' | 'assistant'
+  content: { type: 'text'; text: string }
+}
+
+export interface McpPromptListEntry {
+  name: string
+  description: string
+  arguments?: McpPromptArgument[]
+}
+
 // ─── SSE event ────────────────────────────────────────────────────────────────
 
 export interface McpSseEvent {

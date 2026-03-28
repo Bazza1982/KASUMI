@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express'
 import { toolRegistry } from './ToolRegistry'
 import { resourceRegistry } from './ResourceRegistry'
+import { promptRegistry } from './PromptRegistry'
 import {
   RPC_ERRORS,
   type JsonRpcRequest,
@@ -132,14 +133,28 @@ async function dispatch(
         return makeSuccess(id, { contents: [content] })
       }
 
-      // ── Prompts (stub — no prompts defined yet) ───────────────────────────────
+      // ── Prompt discovery + build ─────────────────────────────────────────────
 
       case 'prompts/list': {
-        return makeSuccess(id, { prompts: [] })
+        return makeSuccess(id, { prompts: promptRegistry.list() })
       }
 
       case 'prompts/get': {
-        return makeError(id, RPC_ERRORS.NOT_FOUND.code, 'No prompts defined')
+        const p = params as { name: string; arguments?: Record<string, string> }
+        if (!p?.name) {
+          return makeError(id, RPC_ERRORS.INVALID_PARAMS.code, 'params.name is required')
+        }
+        const prompt = promptRegistry.get(p.name)
+        if (!prompt) {
+          return makeError(id, RPC_ERRORS.NOT_FOUND.code, `Unknown prompt: ${p.name}`)
+        }
+        try {
+          const messages = await prompt.build(p.arguments ?? {})
+          return makeSuccess(id, { description: prompt.description, messages })
+        } catch (buildErr) {
+          const msg = buildErr instanceof Error ? buildErr.message : String(buildErr)
+          return makeError(id, RPC_ERRORS.INTERNAL_ERROR.code, `Prompt build error: ${msg}`)
+        }
       }
 
       // ── Unknown method ───────────────────────────────────────────────────────
