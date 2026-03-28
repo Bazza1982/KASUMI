@@ -12,6 +12,10 @@ const defaultProps = {
   onExportDocx: noop,
   onExportPdf: noop,
   onImportDocx: noop,
+  onExportMarkdown: noop,
+  onImportMarkdown: noop,
+  onSave: noop,
+  activeTab: 'File',
 }
 
 function setMode(mode: 'data-entry' | 'analyst' | 'admin') {
@@ -30,7 +34,7 @@ describe('WordoRibbon — data-entry mode', () => {
   it('Export .docx button is disabled', () => {
     render(<WordoRibbon {...defaultProps} />)
     const exportBtn = screen.queryAllByRole('button').find(b =>
-      b.textContent?.includes('.docx') && b.textContent?.includes('↓')
+      b.textContent?.includes('Save As .docx')
     ) as HTMLButtonElement | undefined
     expect(exportBtn?.disabled).toBe(true)
   })
@@ -38,7 +42,7 @@ describe('WordoRibbon — data-entry mode', () => {
   it('Import button is disabled', () => {
     render(<WordoRibbon {...defaultProps} />)
     const importBtn = screen.queryAllByRole('button').find(b =>
-      b.textContent?.includes('Import')
+      b.textContent?.includes('Open .docx')
     ) as HTMLButtonElement | undefined
     expect(importBtn?.disabled).toBe(true)
   })
@@ -55,7 +59,7 @@ describe('WordoRibbon — analyst mode', () => {
   it('Export .docx button is enabled', () => {
     render(<WordoRibbon {...defaultProps} />)
     const exportBtn = screen.queryAllByRole('button').find(b =>
-      b.textContent?.includes('.docx') && b.textContent?.includes('↓')
+      b.textContent?.includes('Save As .docx')
     ) as HTMLButtonElement | undefined
     expect(exportBtn?.disabled).toBe(false)
   })
@@ -101,7 +105,7 @@ describe('WordoRibbon — mode switching', () => {
     const onExportDocx = vi.fn()
     render(<WordoRibbon {...defaultProps} onExportDocx={onExportDocx} />)
     const exportBtn = screen.queryAllByRole('button').find(b =>
-      b.textContent?.includes('.docx') && b.textContent?.includes('↓')
+      b.textContent?.includes('Save As .docx')
     ) as HTMLButtonElement | undefined
     expect(exportBtn).toBeDefined()
     expect(exportBtn?.disabled).toBe(false)

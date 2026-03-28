@@ -123,7 +123,7 @@ describe('useWordoStore — updateSectionWatermark', () => {
 
   it('sets watermark on section', () => {
     const id = useWordoStore.getState().document.sections[0].id
-    useWordoStore.getState().updateSectionWatermark(id, { text: 'CONFIDENTIAL', opacity: 0.2, angle: 45 })
+    useWordoStore.getState().updateSectionWatermark(id, { enabled: true, text: 'CONFIDENTIAL', opacity: 0.2, angle: 45 })
     const updated = useWordoStore.getState().document.sections.find(s => s.id === id)!
     expect(updated.watermark?.text).toBe('CONFIDENTIAL')
     expect(updated.watermark?.opacity).toBe(0.2)

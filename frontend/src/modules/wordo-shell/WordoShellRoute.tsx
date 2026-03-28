@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { WordoRibbon } from './components/WordoRibbon'
 import { OutlinePanel } from './components/OutlinePanel'
+import { FindReplacePanel } from './components/FindReplacePanel'
 import { PageSettingsPanel } from './components/PageSettingsPanel'
 import { InsertNexcelDialog } from './components/InsertNexcelDialog'
 import { CommentPanel } from './components/CommentPanel'
@@ -15,6 +16,7 @@ import { addCommentMark, getSelectedText, getSelectionBlockId } from './editor/c
 import { acceptInsert, acceptDelete, rejectInsert, rejectDelete } from './editor/trackChangePlugin'
 import { createLogger } from './editor/logger'
 import { onMenuNewDocument } from '../../platform/native/useNativeBridge'
+import { undo as pmUndo, redo as pmRedo } from 'prosemirror-history'
 
 const log = createLogger('WordoShellRoute')
 
@@ -32,6 +34,7 @@ export const WordoShellRoute: React.FC = () => {
   const [showPageSettings, setShowPageSettings] = useState(false)
   const [showNexcelDialog, setShowNexcelDialog] = useState(false)
   const [showCommentPanel, setShowCommentPanel] = useState(false)
+  const [showFindReplace, setShowFindReplace] = useState(false)
   const [exporting, setExporting]              = useState(false)
   const [importing, setImporting]              = useState(false)
   const [importWarnings, setImportWarnings]    = useState<string[]>([])
@@ -46,6 +49,21 @@ export const WordoShellRoute: React.FC = () => {
     log.info('manual-save', { ok })
   }, [saveNow])
 
+  // ── Undo / Redo ───────────────────────────────────────────
+  const handleUndo = useCallback(() => {
+    if (!focusedSectionId) return
+    const inst = orchestrator.getSection(focusedSectionId)
+    if (!inst) return
+    pmUndo(inst.state, (tr) => orchestrator.applyTransaction(focusedSectionId, tr))
+  }, [focusedSectionId, orchestrator])
+
+  const handleRedo = useCallback(() => {
+    if (!focusedSectionId) return
+    const inst = orchestrator.getSection(focusedSectionId)
+    if (!inst) return
+    pmRedo(inst.state, (tr) => orchestrator.applyTransaction(focusedSectionId, tr))
+  }, [focusedSectionId, orchestrator])
+
   // Native menu: New Document
   useEffect(() => onMenuNewDocument(() => {
     if (window.confirm('Start a new document? Unsaved changes will be lost.')) {
@@ -53,17 +71,17 @@ export const WordoShellRoute: React.FC = () => {
     }
   }), [resetDocument])
 
-  // Ctrl+S shortcut
+  // Keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault()
-        handleSave()
-      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); handleSave() }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); handleUndo() }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); handleRedo() }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); setShowFindReplace(v => !v) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [handleSave])
+  }, [handleSave, handleUndo, handleRedo])
 
   // ── Export .docx ──────────────────────────────────────────
   const handleExportDocx = useCallback(async () => {
@@ -83,6 +101,38 @@ export const WordoShellRoute: React.FC = () => {
   const handleExportPdf = useCallback(() => {
     printToPdf(doc, orchestrator)
   }, [doc, orchestrator])
+
+  // ── Export Markdown ───────────────────────────────────────
+  const handleExportMarkdown = useCallback(async () => {
+    try {
+      const res = await fetch('/api/wordo/export/markdown')
+      const text = await res.text()
+      const blob = new Blob([text], { type: 'text/markdown' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = `${doc.title || 'document'}.md`; a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) { console.error('Markdown export failed:', e) }
+  }, [doc.title])
+
+  // ── Import Markdown ───────────────────────────────────────
+  const mdInputRef = useRef<HTMLInputElement>(null)
+  const handleImportMarkdownClick = () => mdInputRef.current?.click()
+  const handleMdFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    const text = await file.text()
+    try {
+      await fetch('/api/wordo/document/markdown', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ markdown: text, title: file.name.replace(/\.md$/i, '') }),
+      })
+      // Reload by refreshing the page so the server-side document is re-loaded
+      window.location.reload()
+    } catch (e) { console.error('Markdown import failed:', e) }
+  }, [])
 
   // ── Import .docx ──────────────────────────────────────────
   const handleImportClick = () => fileInputRef.current?.click()
@@ -200,31 +250,81 @@ export const WordoShellRoute: React.FC = () => {
   const openCommentCount = commentStore.getAllComments().filter(c => c.status === 'open').length
   const pendingChangeCount = trackChange.getAllChanges().length
 
+  // ── Word count ────────────────────────────────────────────
+  const wordCount = (() => {
+    const text = doc.sections
+      .map(s => orchestrator.getSection(s.id)?.state.doc.textContent ?? '')
+      .join(' ')
+    return text.trim() ? text.trim().split(/\s+/).length : 0
+  })()
+
+  const WORDO_MENUS = ['File', 'Home', 'Insert', 'Layout', 'Review', 'View']
+  const [activeWordoMenu, setActiveWordoMenu] = useState('Home')
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-      <WordoRibbon
-        onPageSettings={() => setShowPageSettings(v => !v)}
-        onInsertNexcel={() => setShowNexcelDialog(true)}
-        onExportDocx={handleExportDocx}
-        onExportPdf={handleExportPdf}
-        onImportDocx={handleImportClick}
-        onAddComment={handleAddComment}
-        onToggleCommentPanel={() => setShowCommentPanel(v => !v)}
-        onAcceptAllChanges={handleAcceptAll}
-        onRejectAllChanges={handleRejectAll}
-        onSave={handleSave}
-        showCommentPanel={showCommentPanel}
-        openCommentCount={openCommentCount}
-        pendingChangeCount={pendingChangeCount}
-      />
+      {/* Classic menu bar — matches NEXCEL */}
+      <div className="wordo-no-print" style={{
+        display: 'flex', alignItems: 'center',
+        background: '#fff', borderBottom: '1px solid #e1dfdd',
+        padding: '0 8px', height: 28, flexShrink: 0, userSelect: 'none',
+      }}>
+        {WORDO_MENUS.map(m => (
+          <button
+            key={m}
+            onClick={() => setActiveWordoMenu(m)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '0 10px', height: '100%', fontSize: 13,
+              color: activeWordoMenu === m ? '#7c3aed' : '#333',
+              fontWeight: activeWordoMenu === m ? 600 : 400,
+              borderBottom: activeWordoMenu === m ? '2px solid #7c3aed' : '2px solid transparent',
+            }}
+          >{m}</button>
+        ))}
+      </div>
+      <div className="wordo-no-print">
+        <WordoRibbon
+          onNewDocument={() => { if (window.confirm('Start a new document? Unsaved changes will be lost.')) resetDocument() }}
+          onPageSettings={() => setShowPageSettings(v => !v)}
+          onInsertNexcel={() => setShowNexcelDialog(true)}
+          onExportDocx={handleExportDocx}
+          onExportPdf={handleExportPdf}
+          onExportMarkdown={handleExportMarkdown}
+          onImportDocx={handleImportClick}
+          onImportMarkdown={handleImportMarkdownClick}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onAddComment={handleAddComment}
+          onToggleCommentPanel={() => setShowCommentPanel(v => !v)}
+          onAcceptAllChanges={handleAcceptAll}
+          onRejectAllChanges={handleRejectAll}
+          onSave={handleSave}
+          onFindReplace={() => setShowFindReplace(v => !v)}
+          showCommentPanel={showCommentPanel}
+          openCommentCount={openCommentCount}
+          pendingChangeCount={pendingChangeCount}
+          wordCount={wordCount}
+          activeTab={activeWordoMenu}
+        />
+      </div>
 
-      {/* Hidden file input */}
+      {/* Hidden file input for .docx */}
       <input
         ref={fileInputRef}
         type="file"
         accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         style={{ display: 'none' }}
         onChange={handleFileChange}
+      />
+
+      {/* Hidden file input for .md */}
+      <input
+        ref={mdInputRef}
+        type="file"
+        accept=".md,.markdown,text/markdown"
+        style={{ display: 'none' }}
+        onChange={handleMdFileChange}
       />
 
       {/* Import warnings */}
@@ -272,7 +372,7 @@ export const WordoShellRoute: React.FC = () => {
       </div>
 
       {/* Status bar */}
-      <div style={{
+      <div className="wordo-no-print" style={{
         height: 24, background: '#f0f0f0', color: '#444',
         borderTop: '1px solid #d0d0d0',
         display: 'flex', alignItems: 'center', padding: '0 10px',
@@ -348,6 +448,7 @@ export const WordoShellRoute: React.FC = () => {
       </div>
 
       {showPageSettings && <PageSettingsPanel onClose={() => setShowPageSettings(false)} />}
+      {showFindReplace && <FindReplacePanel onClose={() => setShowFindReplace(false)} />}
 
       {showNexcelDialog && (
         <InsertNexcelDialog

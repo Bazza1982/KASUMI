@@ -141,3 +141,9 @@ body {
 .kasumi-switcher__btn--inactive:hover {
   background: rgba(255,255,255,0.09); color: #ccccdd;
 }
+
+/* ── Print media ──────────────────────────────────────────────────────────── */
+@media print {
+  .nexcel-no-print { display: none !important; }
+  .wordo-no-print  { display: none !important; }
+}

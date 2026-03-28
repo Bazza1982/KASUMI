@@ -1,4 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react'
+import { LinkDialog } from './LinkDialog'
 import { useWordoStore } from '../stores/useWordoStore'
 import { useWordoAccessStore } from '../stores/useWordoAccessStore'
 import { useTrackChangeStore } from '../stores/useTrackChangeStore'
@@ -60,25 +61,34 @@ const S = {
 }
 
 interface WordoRibbonProps {
+  onNewDocument?: () => void
   onPageSettings?: () => void
   onInsertNexcel?: () => void
   onExportDocx?: () => void
   onExportPdf?: () => void
+  onExportMarkdown?: () => void
   onImportDocx?: () => void
+  onImportMarkdown?: () => void
+  onUndo?: () => void
+  onRedo?: () => void
   onAddComment?: () => void
   onToggleCommentPanel?: () => void
   onAcceptAllChanges?: () => void
   onRejectAllChanges?: () => void
   onSave?: () => void
+  onFindReplace?: () => void
   showCommentPanel?: boolean
   openCommentCount?: number
   pendingChangeCount?: number
+  wordCount?: number
+  activeTab?: string
 }
 
 export const WordoRibbon: React.FC<WordoRibbonProps> = ({
-  onPageSettings, onInsertNexcel, onExportDocx, onExportPdf, onImportDocx,
-  onAddComment, onToggleCommentPanel, onAcceptAllChanges, onRejectAllChanges, onSave,
-  showCommentPanel = false, openCommentCount = 0, pendingChangeCount = 0,
+  onNewDocument, onPageSettings, onInsertNexcel, onExportDocx, onExportPdf, onExportMarkdown,
+  onImportDocx, onImportMarkdown, onUndo, onRedo,
+  onAddComment, onToggleCommentPanel, onAcceptAllChanges, onRejectAllChanges, onSave, onFindReplace, activeTab = 'Home',
+  showCommentPanel = false, openCommentCount = 0, pendingChangeCount = 0, wordCount = 0,
 }) => {
   const { document: doc, setTitle, addSection, orchestrator, focusedSectionId } = useWordoStore()
   const access = useWordoAccessStore()
@@ -160,6 +170,51 @@ export const WordoRibbon: React.FC<WordoRibbonProps> = ({
     el?.focus()
   }
 
+  const insertHorizontalRule = () => {
+    if (!focusedSectionId || !access.canInsertBlocks) return
+    const instance = orchestrator.getSection(focusedSectionId)
+    if (!instance) return
+    const { state } = instance
+    const hr = state.schema.nodes.horizontal_rule
+    if (!hr) return
+    orchestrator.applyTransaction(focusedSectionId, state.tr.replaceSelectionWith(hr.create()))
+    const el = document.querySelector(`[data-section-id="${focusedSectionId}"] .ProseMirror`) as HTMLElement | null
+    el?.focus()
+  }
+
+  const [showLinkDialog, setShowLinkDialog] = useState(false)
+
+  const clearFormatting = () => {
+    if (!focusedSectionId || !access.canEditBody) return
+    const instance = orchestrator.getSection(focusedSectionId)
+    if (!instance) return
+    const { state } = instance
+    const { from, to } = state.selection
+    if (from === to) return
+    const tr = state.tr.removeMark(from, to)
+    orchestrator.applyTransaction(focusedSectionId, tr)
+  }
+
+  const insertLink = (url: string, displayText: string) => {
+    if (!focusedSectionId || !access.canEditBody) return
+    const instance = orchestrator.getSection(focusedSectionId)
+    if (!instance) return
+    const { state } = instance
+    const linkMark = wordoSchema.marks.link
+    if (!linkMark) return
+    const { from, to } = state.selection
+    if (from === to && !displayText) return
+    const mark = linkMark.create({ href: url, title: displayText || url })
+    let tr = state.tr
+    if (from === to && displayText) {
+      tr = tr.insertText(displayText, from).addMark(from, from + displayText.length, mark)
+    } else {
+      tr = tr.addMark(from, to, mark)
+    }
+    orchestrator.applyTransaction(focusedSectionId, tr)
+    setShowLinkDialog(false)
+  }
+
   const noEdit = !access.canEditBody
   const trackEnabled = trackChange.enabled
 
@@ -230,8 +285,27 @@ export const WordoRibbon: React.FC<WordoRibbonProps> = ({
         </span>
       </div>
 
-      {/* Format toolbar */}
-      <div style={{ ...S.bar, opacity: noEdit ? 0.6 : 1 }}>
+      {/* Tab-aware toolbar */}
+      <div style={{ ...S.bar, opacity: noEdit && activeTab === 'Home' ? 0.6 : 1 }}>
+      {activeTab === 'File' && (
+        <>
+          <button style={S.actionBtn(false, '#15803d', '#f0fdf4', '#86efac')} onClick={onNewDocument} title="New Document">📄 New</button>
+          <div style={S.sep} />
+          <button style={S.actionBtn(false, '#15803d', '#f0fdf4', '#86efac')} onClick={onSave} title="Save (Ctrl+S)">💾 Save</button>
+          <div style={S.sep} />
+          <button style={S.actionBtn(!access.canImport, '#0e7490', '#ecfeff', '#67e8f9')} disabled={!access.canImport} onClick={onImportDocx}>↑ Open .docx</button>
+          <button style={S.actionBtn(!access.canImport, '#0e7490', '#ecfeff', '#67e8f9')} disabled={!access.canImport} onClick={onImportMarkdown}>↑ Open .md</button>
+          <div style={S.sep} />
+          <button style={S.actionBtn(!access.canExport, '#5b21b6', '#f5f3ff', '#c4b5fd')} disabled={!access.canExport} onClick={onExportDocx}>↓ Save As .docx</button>
+          <button style={S.actionBtn(!access.canExport, '#5b21b6', '#f5f3ff', '#c4b5fd')} disabled={!access.canExport} onClick={onExportMarkdown}>↓ Export .md</button>
+          <button style={S.actionBtn(!access.canExport, '#5b21b6', '#f5f3ff', '#c4b5fd')} disabled={!access.canExport} onClick={onExportPdf}>🖨 Print / PDF</button>
+        </>
+      )}
+      {activeTab === 'Home' && (<>
+        {/* Undo / Redo */}
+        <button style={S.btn(false)} title="Undo (Ctrl+Z)" onClick={onUndo}>↩ Undo</button>
+        <button style={S.btn(false)} title="Redo (Ctrl+Y)" onClick={onRedo}>↪ Redo</button>
+        <div style={S.sep} />
         {/* Block type */}
         <select
           style={S.select}
@@ -339,118 +413,62 @@ export const WordoRibbon: React.FC<WordoRibbonProps> = ({
         <button style={S.btn(noEdit)} disabled={noEdit} onMouseDown={e => { e.preventDefault(); setBlockquote() }}>" Quote</button>
 
         <div style={S.sep} />
+        <button style={S.btn(noEdit)} disabled={noEdit} onMouseDown={e => { e.preventDefault(); clearFormatting() }} title="Clear Formatting">✕ Clear Fmt</button>
+        <button style={S.btn(false)} title="Find & Replace (Ctrl+F)" onClick={onFindReplace}>🔍 Find</button>
+      </>)}
 
-        <button style={S.btn(!access.canInsertBlocks)} disabled={!access.canInsertBlocks} onMouseDown={e => { e.preventDefault(); insertTable() }}>⊞ Table</button>
+      {activeTab === 'Insert' && (
+        <>
+          <button style={S.btn(!access.canInsertBlocks)} disabled={!access.canInsertBlocks} onMouseDown={e => { e.preventDefault(); insertTable() }}>⊞ Table</button>
+          <button style={S.btn(!access.canInsertBlocks)} disabled={!access.canInsertBlocks} onMouseDown={e => { e.preventDefault(); insertHorizontalRule() }}>― HR</button>
+          <div style={S.sep} />
+          <button style={S.btn(!access.canInsertBlocks)} disabled={!access.canInsertBlocks} onMouseDown={e => { e.preventDefault(); setBlockquote() }}>❝ Quote</button>
+          <button style={S.btn(!access.canInsertBlocks)} disabled={!access.canInsertBlocks} onMouseDown={e => { e.preventDefault(); toggleCode() }}>{`</>`} Code</button>
+          <div style={S.sep} />
+          <button style={S.btn(!access.canInsertBlocks)} disabled={!access.canInsertBlocks} onMouseDown={e => { e.preventDefault(); setShowLinkDialog(true) }}>🔗 Link</button>
+          <div style={S.sep} />
+          <button style={S.actionBtn(!access.canInsertBlocks, '#15803d', '#f0fdf4', '#86efac')} disabled={!access.canInsertBlocks} onClick={onInsertNexcel}>📊 Nexcel</button>
+          <div style={S.sep} />
+          <button style={S.actionBtn(!access.canInsertSections, '#1d4ed8', '#eff6ff', '#93c5fd')} disabled={!access.canInsertSections} onClick={addSection}>⊞ Section</button>
+        </>
+      )}
 
-        <div style={S.sep} />
+      {activeTab === 'Layout' && (
+        <>
+          <button style={S.btn(!access.canSetPageStyle)} disabled={!access.canSetPageStyle} onClick={onPageSettings}>⚙ Page Settings</button>
+        </>
+      )}
 
-        {/* ── Track Changes ─────────────────────────────── */}
-        <button
-          style={S.btn(noEdit, trackEnabled)}
-          disabled={noEdit}
-          onClick={() => trackChange.toggleTracking()}
-          title={trackEnabled ? 'Tracking ON — click to disable' : 'Enable Track Changes'}
-        >
-          {trackEnabled ? '🔴 Tracking' : '⚪ Track'}
-        </button>
+      {activeTab === 'Review' && (
+        <>
+          <button
+            style={S.btn(noEdit, trackEnabled)}
+            disabled={noEdit}
+            onClick={() => trackChange.toggleTracking()}
+            title={trackEnabled ? 'Tracking ON — click to disable' : 'Enable Track Changes'}
+          >
+            {trackEnabled ? '🔴 Track Changes' : '⚪ Track Changes'}
+          </button>
+          {pendingChangeCount > 0 && (
+            <>
+              <button style={S.actionBtn(false, '#15803d', '#f0fdf4', '#86efac')} onClick={onAcceptAllChanges}>✓ Accept All ({pendingChangeCount})</button>
+              <button style={S.actionBtn(false, '#dc2626', '#fef2f2', '#fca5a5')} onClick={onRejectAllChanges}>✕ Reject All</button>
+            </>
+          )}
+          <div style={S.sep} />
+          <button style={S.actionBtn(noEdit, '#d97706', '#fffbeb', '#fde68a')} disabled={noEdit} onClick={onAddComment}>💬 Add Comment</button>
+          <button style={S.btn(false, showCommentPanel)} onClick={onToggleCommentPanel}>{openCommentCount > 0 ? `🗨 ${openCommentCount}` : '🗨 Comments'}</button>
+        </>
+      )}
 
-        {pendingChangeCount > 0 && (
-          <>
-            <button
-              style={S.actionBtn(false, '#15803d', '#f0fdf4', '#86efac')}
-              onClick={onAcceptAllChanges}
-              title={`Accept all ${pendingChangeCount} changes`}
-            >
-              ✓ Accept All ({pendingChangeCount})
-            </button>
-            <button
-              style={S.actionBtn(false, '#dc2626', '#fef2f2', '#fca5a5')}
-              onClick={onRejectAllChanges}
-              title="Reject all changes"
-            >
-              ✕ Reject All
-            </button>
-          </>
-        )}
-
-        <div style={S.sep} />
-
-        {/* ── Comments ──────────────────────────────────── */}
-        <button
-          style={S.actionBtn(noEdit, '#d97706', '#fffbeb', '#fde68a')}
-          disabled={noEdit}
-          onClick={onAddComment}
-          title="Add comment to selection"
-        >
-          💬 Comment
-        </button>
-
-        <button
-          style={S.btn(false, showCommentPanel)}
-          onClick={onToggleCommentPanel}
-          title="Toggle comment panel"
-        >
-          {openCommentCount > 0 ? `🗨 ${openCommentCount}` : '🗨 Comments'}
-        </button>
-
-        <div style={S.sep} />
-
-        {/* Section break */}
-        <button
-          style={S.actionBtn(!access.canInsertSections, '#1d4ed8', '#eff6ff', '#93c5fd')}
-          disabled={!access.canInsertSections}
-          onClick={addSection}
-        >
-          ⊞ Section Break
-        </button>
-
-        <div style={S.sep} />
-
-        <button
-          style={S.btn(!access.canSetPageStyle)}
-          disabled={!access.canSetPageStyle}
-          onClick={onPageSettings}
-        >
-          ⚙ Page
-        </button>
-
-        <div style={S.sep} />
-
-        <button
-          style={S.actionBtn(!access.canInsertBlocks, '#15803d', '#f0fdf4', '#86efac')}
-          disabled={!access.canInsertBlocks}
-          onClick={onInsertNexcel}
-        >
-          📊 Nexcel Table
-        </button>
-
-        <div style={S.sep} />
-
-        <button
-          style={S.actionBtn(!access.canImport, '#0e7490', '#ecfeff', '#67e8f9')}
-          disabled={!access.canImport}
-          onClick={onImportDocx}
-        >
-          ↑ Import .docx
-        </button>
-
-        <div style={S.sep} />
-
-        <button
-          style={S.actionBtn(!access.canExport, '#5b21b6', '#f5f3ff', '#c4b5fd')}
-          disabled={!access.canExport}
-          onClick={onExportDocx}
-        >
-          ↓ .docx
-        </button>
-        <button
-          style={S.actionBtn(!access.canExport, '#5b21b6', '#f5f3ff', '#c4b5fd')}
-          disabled={!access.canExport}
-          onClick={onExportPdf}
-        >
-          🖨 PDF
-        </button>
+      {activeTab === 'View' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 12, padding: '0 4px' }}>
+          <span style={{ color: 'var(--text-muted, #94a3b8)' }}>Sections: <strong style={{ color: '#0f172a' }}>{doc.sections.length}</strong></span>
+          <span style={{ color: 'var(--text-muted, #94a3b8)' }}>Words: <strong style={{ color: '#0f172a' }}>{wordCount.toLocaleString()}</strong></span>
+        </div>
+      )}
       </div>
+      {showLinkDialog && <LinkDialog onConfirm={insertLink} onCancel={() => setShowLinkDialog(false)} />}
     </div>
   )
 }

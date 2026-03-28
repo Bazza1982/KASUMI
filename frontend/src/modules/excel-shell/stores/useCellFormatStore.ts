@@ -1,12 +1,32 @@
 import { create } from 'zustand'
 import { NexcelLogger } from '../services/logger'
 
+export type NumberFormatType = 'general' | 'number' | 'currency' | 'percentage' | 'date' | 'text'
+
 export interface CellFormat {
   bgColor?: string
   textColor?: string
   bold?: boolean
   italic?: boolean
   align?: 'left' | 'center' | 'right'
+  numberFormat?: NumberFormatType
+}
+
+export function applyNumberFormat(value: string, fmt: NumberFormatType | undefined): string {
+  if (!fmt || fmt === 'general' || fmt === 'text') return value
+  const num = parseFloat(value)
+  if (isNaN(num)) return value
+  switch (fmt) {
+    case 'number':     return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    case 'currency':   return num.toLocaleString(undefined, { style: 'currency', currency: 'USD' })
+    case 'percentage': return (num / 100).toLocaleString(undefined, { style: 'percent', minimumFractionDigits: 2 })
+    case 'date': {
+      // treat value as epoch ms or ISO string
+      const d = new Date(isNaN(Number(value)) ? value : num)
+      return isNaN(d.getTime()) ? value : d.toLocaleDateString()
+    }
+    default: return value
+  }
 }
 
 type FormatMap = Record<string, CellFormat>  // key = "rowId:fieldId"

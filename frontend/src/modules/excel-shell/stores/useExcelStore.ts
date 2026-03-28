@@ -38,6 +38,12 @@ interface ExcelState {
   // ── Status ────────────────────────────────────────
   statusText: string
 
+  // ── Sheet lifecycle ───────────────────────────────
+  newSheet: () => Promise<void>
+  addColumn: (name?: string) => Promise<void>
+  deleteColumn: (fieldId: number) => Promise<void>
+  renameField: (fieldId: number, name: string) => Promise<void>
+
   // ── Sort ──────────────────────────────────────────
   sortConfig: { fieldIndex: number; direction: 'asc' | 'desc' } | null
 
@@ -93,9 +99,24 @@ interface ExcelState {
     dstStartRow: number, dstStartCol: number, dstEndRow: number, dstEndCol: number
   ) => Promise<void>
 
+  // ── Zoom ──────────────────────────────────────────
+  zoomLevel: number          // 0.75 | 1.0 | 1.25 | 1.5
+  setZoomLevel: (z: number) => void
+
   // ── Freeze columns ────────────────────────────────
   frozenColCount: number
   toggleFreezeFirstCol: () => void
+
+  // ── Freeze rows ───────────────────────────────────
+  frozenRowCount: number
+  toggleFreezeFirstRow: () => void
+
+  // ── Column widths (local UI state) ────────────────
+  colWidths: Record<number, number>
+  setColWidth: (fieldId: number, width: number) => void
+
+  // ── Deduplicate rows ──────────────────────────────
+  deduplicateRows: () => Promise<void>
 
   // ── Hidden columns ────────────────────────────────
   hiddenFieldIds: number[]
@@ -218,7 +239,10 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     allRows: [],
     undoStack: [],
     redoStack: [],
+    zoomLevel: 1.0,
     frozenColCount: 0,
+    frozenRowCount: 0,
+    colWidths: {},
     hiddenFieldIds: [],
     cutSelection: null,
 
@@ -345,23 +369,29 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     },
 
     clearCells: async (coords) => {
-      const { sheet } = get()
+      const { sheet, allRows } = get()
       if (!sheet) return
 
       pushUndo()
 
       const updates: Array<{ rowId: number; fieldId: number; value: unknown }> = []
       const newRows = [...sheet.rows]
+      let newAllRows = [...allRows]
 
       for (const { rowIndex, colIndex } of coords) {
         const field = sheet.fields[colIndex]
         const row = sheet.rows[rowIndex]
         if (!field || !row || field.readOnly) continue
         newRows[rowIndex] = { ...row, fields: { ...row.fields, [field.id]: '' } }
+        // Sync to allRows so applyFiltersAndSort() doesn't revert the clear
+        const allIdx = newAllRows.findIndex(r => r.id === row.id)
+        if (allIdx >= 0) {
+          newAllRows[allIdx] = { ...newAllRows[allIdx], fields: { ...newAllRows[allIdx].fields, [field.id]: '' } }
+        }
         updates.push({ rowId: row.id, fieldId: field.id, value: '' })
       }
 
-      set({ sheet: { ...sheet, rows: newRows } })
+      set({ sheet: { ...sheet, rows: newRows }, allRows: newAllRows })
       if (updates.length > 0) {
         await adapter.batchUpdate(sheet.tableId, updates)
       }
@@ -535,6 +565,108 @@ export const useExcelStore = create<ExcelState>((set, get) => {
         undoStack: newUndoStack,
         redoStack: newRedoStack,
       })
+    },
+
+    // ── Sheet lifecycle ───────────────────────────────
+
+    newSheet: async () => {
+      const { sheet } = get()
+      if (!sheet) return
+      NexcelLogger.store('info', 'newSheet', {})
+
+      // Build 26 blank text columns (A-Z)
+      const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+      const blankFields: FieldMeta[] = LETTERS.split('').map((_, i) => ({
+        id: i + 1,
+        name: '',
+        type: 'text' as const,
+        order: i + 1,
+        primary: i === 0,
+        readOnly: false,
+      }))
+
+      // 100 empty rows — gives the "large open workbook" feel
+      const blankRows: RowRecord[] = Array.from({ length: 100 }, (_, i) => ({
+        id: i + 1,
+        order: `${(i + 1).toFixed(5)}`,
+        fields: {} as Record<number, unknown>,
+      }))
+
+      set({
+        allRows: blankRows,
+        sheet: { ...sheet, fields: blankFields, rows: blankRows, totalCount: 100 },
+        undoStack: [],
+        redoStack: [],
+        sortConfig: null,
+        columnFilters: {},
+        searchText: '',
+        selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
+        activeCell: { rowIndex: 0, colIndex: 0 },
+        frozenRowCount: 0,
+        frozenColCount: 0,
+        colWidths: {},
+        zoomLevel: 1.0,
+      })
+    },
+
+    addColumn: async (name?: string) => {
+      const { sheet } = get()
+      if (!sheet) return
+      const colName = name ?? `Column ${sheet.fields.length + 1}`
+      NexcelLogger.store('info', 'addColumn', { name: colName })
+      const res = await fetch('/api/nexcel/columns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: colName, type: 'text' }),
+      }).catch(() => null)
+      if (!res?.ok) return
+      const data = await res.json()
+      const newField: FieldMeta = data.data
+      set(s => ({
+        sheet: s.sheet ? { ...s.sheet, fields: [...s.sheet.fields, newField] } : s.sheet,
+      }))
+    },
+
+    deleteColumn: async (fieldId: number) => {
+      const { sheet } = get()
+      if (!sheet) return
+      NexcelLogger.store('info', 'deleteColumn', { fieldId })
+      const res = await fetch(`/api/nexcel/columns/${fieldId}`, { method: 'DELETE' }).catch(() => null)
+      if (!res?.ok) return
+      set(s => {
+        if (!s.sheet) return s
+        const newAllRows = s.allRows.map(r => {
+          const f = { ...r.fields }
+          delete f[fieldId]
+          return { ...r, fields: f }
+        })
+        return {
+          allRows: newAllRows,
+          sheet: {
+            ...s.sheet,
+            fields: s.sheet.fields.filter(f => f.id !== fieldId),
+            rows: s.sheet.rows.map(r => {
+              const f = { ...r.fields }
+              delete f[fieldId]
+              return { ...r, fields: f }
+            }),
+          },
+        }
+      })
+    },
+
+    renameField: async (fieldId: number, name: string) => {
+      const res = await fetch(`/api/nexcel/columns/${fieldId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      }).catch(() => null)
+      if (!res?.ok) return
+      set(s => ({
+        sheet: s.sheet
+          ? { ...s.sheet, fields: s.sheet.fields.map(f => f.id === fieldId ? { ...f, name } : f) }
+          : s.sheet,
+      }))
     },
 
     // ── Export ────────────────────────────────────────
@@ -792,9 +924,47 @@ export const useExcelStore = create<ExcelState>((set, get) => {
 
     // ── Freeze columns ────────────────────────────────
 
+    setZoomLevel: (z: number) => {
+      const clamped = Math.min(2.0, Math.max(0.5, z))
+      NexcelLogger.store('info', 'setZoomLevel', { zoom: clamped })
+      set({ zoomLevel: clamped })
+    },
+
     toggleFreezeFirstCol: () => {
       const { frozenColCount } = get()
       set({ frozenColCount: frozenColCount > 0 ? 0 : 1 })
+    },
+
+    // ── Freeze rows ───────────────────────────────────
+
+    toggleFreezeFirstRow: () => {
+      const { frozenRowCount } = get()
+      set({ frozenRowCount: frozenRowCount > 0 ? 0 : 1 })
+    },
+
+    // ── Column widths ─────────────────────────────────
+
+    setColWidth: (fieldId: number, width: number) => {
+      set(s => ({ colWidths: { ...s.colWidths, [fieldId]: width } }))
+    },
+
+    // ── Deduplicate rows ──────────────────────────────
+
+    deduplicateRows: async () => {
+      const res = await fetch('/api/nexcel/rows/deduplicate', { method: 'POST' }).catch(() => null)
+      if (!res?.ok) return
+      const { allRows, sheet } = get()
+      if (!sheet) return
+      // Deduplicate allRows locally matching the server logic
+      const seen = new Set<string>()
+      const newAllRows = allRows.filter(row => {
+        const key = JSON.stringify(row.fields)
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      set({ allRows: newAllRows })
+      applyFiltersAndSort()
     },
 
     // ── Hidden columns ────────────────────────────────

@@ -25,7 +25,9 @@ const ExcelShellRoute = () => {
   const { load: loadFormats, setFormatRange } = useCellFormatStore()
   const { load: loadChanges } = useCellChangeStore()
   const { load: loadConditionalFormats } = useConditionalFormatStore()
-  const { sheet, selection, activeCell } = useExcelStore()
+  const { sheet, selection, activeCell, undo, redo, deduplicateRows } = useExcelStore()
+
+  const handlePrint = () => window.print()
 
   // Load persisted data on mount
   useEffect(() => {
@@ -73,6 +75,14 @@ const ExcelShellRoute = () => {
       if (e.key === 'Escape' && showHelp) {
         setShowHelp(false)
       }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        undo()
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault()
+        redo()
+      }
       // Dev utility: Ctrl+Shift+D exports AI context to console
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'D') {
         e.preventDefault()
@@ -92,7 +102,7 @@ const ExcelShellRoute = () => {
     <ErrorBoundary>
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#f3f2f1' }}>
         {/* Classic menu bar */}
-        <div style={{
+        <div className="nexcel-no-print" style={{
           display: 'flex', alignItems: 'center',
           background: '#fff', borderBottom: '1px solid #e1dfdd',
           padding: '0 8px', height: 28, flexShrink: 0, userSelect: 'none',
@@ -117,13 +127,16 @@ const ExcelShellRoute = () => {
           showCommentPanel={showCommentPanel}
           onFormatSelection={(fmt) => setFormatRange(getSelectedCellRefs(), fmt)}
           onConditionalFormat={() => setShowConditionalFormat(true)}
+          activeTab={activeMenu}
+          onPrint={handlePrint}
+          onDeduplicate={deduplicateRows}
         />
-        <FormulaBar />
+        <div className="nexcel-no-print"><FormulaBar /></div>
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
           <VirtualGrid />
         </div>
-        <SheetTabs />
-        <StatusBar />
+        <div className="nexcel-no-print"><SheetTabs /></div>
+        <div className="nexcel-no-print"><StatusBar /></div>
         {showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)} />}
         <CommentPanel isOpen={showCommentPanel} onClose={() => setShowCommentPanel(false)} />
         {(() => {

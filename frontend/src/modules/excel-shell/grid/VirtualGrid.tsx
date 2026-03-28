@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useCallback, useState, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useExcelStore } from '../stores/useExcelStore'
-import { useCellFormatStore } from '../stores/useCellFormatStore'
+import { useCellFormatStore, applyNumberFormat } from '../stores/useCellFormatStore'
 import { useConditionalFormatStore } from '../stores/useConditionalFormatStore'
 import { useCommentStore } from '../stores/useCommentStore'
 import { renderCellValue, getSelectOptionStyle } from './renderers'
@@ -35,7 +35,8 @@ function parseDuration(input: string): number {
 
 const ROW_HEADER_WIDTH = 50
 const COL_HEADER_HEIGHT = 44
-const DEFAULT_COL_WIDTH = 110
+const BASE_COL_WIDTH = 110
+const BASE_ROW_HEIGHT = 24
 
 // Convert 0-based column index to Excel-style letter(s): 0→A, 25→Z, 26→AA …
 function colLabel(index: number): string {
@@ -47,7 +48,6 @@ function colLabel(index: number): string {
   }
   return label
 }
-const DEFAULT_ROW_HEIGHT = 24
 
 // ── SelectChip ────────────────────────────────────────────────────────────────
 
@@ -202,10 +202,14 @@ function CellContent({
   rowIndex,
   field,
   isSelectEditing: _isSelectEditing,
+  numberFormat,
+  fontSize = 13,
 }: {
   rowIndex: number
   field: FieldMeta | null
   isSelectEditing: boolean
+  numberFormat?: import('../stores/useCellFormatStore').NumberFormatType
+  fontSize?: number
 }) {
   const { sheet, isEditing, activeCell, editValue, setEditValue, commitCellByField: _commitCellByField } = useExcelStore()
   const isActive = activeCell?.rowIndex === rowIndex && activeCell?.colIndex !== undefined
@@ -238,7 +242,7 @@ function CellContent({
         <input
           type="date"
           autoFocus
-          style={{ width: '100%', height: '100%', border: 'none', outline: 'none', padding: '0 4px', fontFamily: 'inherit', fontSize: '13px' }}
+          style={{ width: '100%', height: '100%', border: 'none', outline: 'none', padding: '0 4px', fontFamily: 'inherit', fontSize: `${fontSize}px` }}
           value={editValue.substring(0, 10)}
           onChange={e => setEditValue(e.target.value)}
           onPointerDown={e => e.stopPropagation()}
@@ -250,7 +254,7 @@ function CellContent({
         <input
           type="number"
           autoFocus
-          style={{ width: '100%', height: '100%', border: 'none', outline: 'none', padding: '0 4px', fontFamily: 'inherit', fontSize: '13px', textAlign: 'right' }}
+          style={{ width: '100%', height: '100%', border: 'none', outline: 'none', padding: '0 4px', fontFamily: 'inherit', fontSize: `${fontSize}px`, textAlign: 'right' }}
           value={editValue}
           onChange={e => setEditValue(e.target.value)}
           step={field.numberDecimalPlaces ? `0.${'0'.repeat(field.numberDecimalPlaces - 1)}1` : '1'}
@@ -263,7 +267,7 @@ function CellContent({
         <input
           autoFocus
           placeholder="e.g. 2h30m or 1:30:00"
-          style={{ width: '100%', height: '100%', border: 'none', outline: 'none', padding: '0 4px', fontFamily: 'inherit', fontSize: '13px' }}
+          style={{ width: '100%', height: '100%', border: 'none', outline: 'none', padding: '0 4px', fontFamily: 'inherit', fontSize: `${fontSize}px` }}
           value={editValue}
           onChange={e => setEditValue(e.target.value)}
           onBlur={() => {
@@ -309,7 +313,7 @@ function CellContent({
           outline: 'none',
           padding: '0 4px',
           fontFamily: 'inherit',
-          fontSize: '13px',
+          fontSize: `${fontSize}px`,
           backgroundColor: 'transparent',
         }}
         value={editValue}
@@ -323,7 +327,7 @@ function CellContent({
   if (!field || !sheet) {
     const raw = field && sheet ? sheet.rows[rowIndex]?.fields[field.id] : undefined
     const display = raw !== undefined && field ? renderCellValue(raw, field) : ''
-    return <span style={{ padding: '0 4px', fontSize: '13px' }}>{display}</span>
+    return <span style={{ padding: '0 4px', fontSize: `${fontSize}px` }}>{display}</span>
   }
 
   const raw = sheet.rows[rowIndex]?.fields[field.id]
@@ -356,7 +360,7 @@ function CellContent({
 
   if (field.type === 'link_row') {
     const links = Array.isArray(raw) ? raw as Array<{ id?: number; value?: string }> : []
-    if (!links.length) return <span style={{ padding: '0 4px', fontSize: '13px' }} />
+    if (!links.length) return <span style={{ padding: '0 4px', fontSize: `${fontSize}px` }} />
     return (
       <div style={{ padding: '0 4px', display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'nowrap', overflow: 'hidden' }}>
         {links.map((l, i) => (
@@ -366,7 +370,7 @@ function CellContent({
               backgroundColor: '#e8eaf6',
               borderRadius: 10,
               padding: '1px 7px',
-              fontSize: '11px',
+              fontSize: `${Math.round(fontSize * 0.85)}px`,
               color: '#3949ab',
               whiteSpace: 'nowrap',
               maxWidth: 80,
@@ -393,11 +397,13 @@ function CellContent({
     )
   }
 
+  const formattedDisplay = applyNumberFormat(display, numberFormat)
+
   return (
     <span
       style={{
         padding: '0 4px',
-        fontSize: '13px',
+        fontSize: `${fontSize}px`,
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
@@ -406,7 +412,7 @@ function CellContent({
         textAlign: field.type === 'number' ? 'right' : 'left',
       }}
     >
-      {display}
+      {formattedDisplay}
     </span>
   )
 }
@@ -454,6 +460,17 @@ const VirtualGrid = () => {
   // Cell history panel
   const [historyCellRef, setHistoryCellRef] = useState<string | null>(null)
 
+  // Column header inline rename
+  const [renamingColId, setRenamingColId] = useState<number | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const renameInputRef = React.useRef<HTMLInputElement>(null)
+
+  const commitRename = () => {
+    if (renamingColId == null) return
+    renameField(renamingColId, renameValue.trim())
+    setRenamingColId(null)
+  }
+
   // Column header context menu
   const [colHeaderCtxMenu, setColHeaderCtxMenu] = useState<{
     fieldIndex: number
@@ -471,6 +488,8 @@ const VirtualGrid = () => {
     searchText,
     sortConfig,
     frozenColCount,
+    frozenRowCount,
+    zoomLevel,
     hiddenFieldIds,
     setActiveCell,
     setSelection,
@@ -491,6 +510,8 @@ const VirtualGrid = () => {
     showAllColumns,
     commitCellByField,
     cutSelection,
+    renameField,
+    addRow,
   } = useExcelStore()
 
   const { getFormat } = useCellFormatStore()
@@ -544,11 +565,16 @@ const VirtualGrid = () => {
   const rowCount = filteredIndices.length
   const colCount = visibleFields.length
 
+  // Zoom-derived sizes — row height scales with zoom; col widths scale default only
+  // (user-resized widths are stored in base px and also scaled)
+  const rowH = Math.round(BASE_ROW_HEIGHT * zoomLevel)
+  const defaultColW = Math.round(BASE_COL_WIDTH * zoomLevel)
+
   // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => DEFAULT_ROW_HEIGHT,
+    estimateSize: () => rowH,
     overscan: 10,
   })
 
@@ -556,7 +582,8 @@ const VirtualGrid = () => {
     horizontal: true,
     count: colCount,
     getScrollElement: () => parentRef.current,
-    estimateSize: useCallback((i: number) => colWidthsRef.current[i] ?? DEFAULT_COL_WIDTH, []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    estimateSize: useCallback((i: number) => Math.round((colWidthsRef.current[i] ?? BASE_COL_WIDTH) * zoomLevel), [zoomLevel]),
     overscan: 5,
   })
 
@@ -569,10 +596,11 @@ const VirtualGrid = () => {
   const getFrozenLeft = useCallback((visibleColIndex: number) => {
     let left = ROW_HEADER_WIDTH
     for (let i = 0; i < visibleColIndex; i++) {
-      left += colWidthsRef.current[i] ?? DEFAULT_COL_WIDTH
+      left += Math.round((colWidthsRef.current[i] ?? BASE_COL_WIDTH) * zoomLevel)
     }
     return left
-  }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomLevel])
 
   // ── Horizontal scroll sync ─────────────────────────────────────────────────
 
@@ -592,7 +620,7 @@ const VirtualGrid = () => {
   const startResize = useCallback((colIndex: number, e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    const startWidth = colWidthsRef.current[colIndex] ?? DEFAULT_COL_WIDTH
+    const startWidth = colWidthsRef.current[colIndex] ?? defaultColW
     resizingRef.current = { colIndex, startX: e.clientX, startWidth }
   }, [])
 
@@ -719,11 +747,24 @@ const VirtualGrid = () => {
           e.preventDefault()
           exitEdit(true)
           if (activeCell) {
-            const next = e.shiftKey
-              ? Math.max(0, activeCell.colIndex - 1)
-              : Math.min(colCount - 1, activeCell.colIndex + 1)
-            setActiveCell(activeCell.rowIndex, next)
-            scrollTo(activeCell.rowIndex, next)
+            let nextRow = activeCell.rowIndex
+            let nextCol: number
+            if (!e.shiftKey) {
+              if (activeCell.colIndex === colCount - 1) {
+                nextCol = 0
+                if (activeCell.rowIndex === rowCount - 1) {
+                  addRow()
+                } else {
+                  nextRow = activeCell.rowIndex + 1
+                }
+              } else {
+                nextCol = activeCell.colIndex + 1
+              }
+            } else {
+              nextCol = Math.max(0, activeCell.colIndex - 1)
+            }
+            setActiveCell(nextRow, nextCol)
+            scrollTo(nextRow, nextCol)
           }
         } else if (e.key === 'Escape') {
           exitEdit(false)
@@ -743,7 +784,22 @@ const VirtualGrid = () => {
         case 'ArrowRight': colIndex = Math.min(colCount - 1, colIndex + 1); e.preventDefault(); break
         case 'Tab':
           e.preventDefault()
-          colIndex = e.shiftKey ? Math.max(0, colIndex - 1) : Math.min(colCount - 1, colIndex + 1)
+          if (!e.shiftKey) {
+            if (colIndex === colCount - 1) {
+              // Last column — wrap to col 0 of next row, auto-adding if at last row
+              colIndex = 0
+              if (rowIndex === rowCount - 1) {
+                addRow()
+                // Stay at current rowIndex; addRow adds a row so rowCount will increase
+              } else {
+                rowIndex = rowIndex + 1
+              }
+            } else {
+              colIndex = colIndex + 1
+            }
+          } else {
+            colIndex = Math.max(0, colIndex - 1)
+          }
           setActiveCell(rowIndex, colIndex)
           scrollTo(rowIndex, colIndex)
           return
@@ -927,7 +983,7 @@ const VirtualGrid = () => {
 
     if (!vRow || !vCol) return null
 
-    const colW = colWidths[endCol] ?? DEFAULT_COL_WIDTH
+    const colW = colWidths[endCol] ?? defaultColW
     return {
       top: vRow.start + vRow.size - 4,
       left: vCol.start + ROW_HEADER_WIDTH + colW - 4,
@@ -944,7 +1000,7 @@ const VirtualGrid = () => {
       const y = e.clientY - rect.top + scrollEl.scrollTop
 
       const colItem = columnVirtualizer.getVirtualItems().find(vc => {
-        const w = colWidths[vc.index] ?? DEFAULT_COL_WIDTH
+        const w = colWidths[vc.index] ?? defaultColW
         return x >= vc.start && x < vc.start + w
       })
       const rowItem = rowVirtualizer.getVirtualItems().find(vr => y >= vr.start && y < vr.start + vr.size)
@@ -1064,7 +1120,7 @@ const VirtualGrid = () => {
             {columnVirtualizer.getVirtualItems().map(vc => {
               const field = visibleFields[vc.index]
               const isColActive = activeCell?.colIndex === vc.index
-              const colW = colWidths[vc.index] ?? DEFAULT_COL_WIDTH
+              const colW = colWidths[vc.index] ?? defaultColW
               const isFrozen = vc.index < frozenColCount
               // Frozen column headers are covered by the overlay; render non-frozen only
               if (isFrozen) return null
@@ -1091,20 +1147,58 @@ const VirtualGrid = () => {
                     gap: 1,
                   }}
                   onClick={() => { if (!isResizingActiveRef.current) toggleSort(vc.index) }}
+                  onDoubleClick={() => {
+                    if (!field || isResizingActiveRef.current) return
+                    setRenamingColId(field.id)
+                    setRenameValue(field.name)
+                    setTimeout(() => renameInputRef.current?.select(), 0)
+                  }}
                   onContextMenu={e => handleColHeaderContextMenu(vc.index, e)}
                 >
-                  <span style={{ fontSize: '11px', color: '#999', lineHeight: 1, letterSpacing: '0.5px', fontWeight: 500 }}>
-                    {colLabel(vc.index)}
-                  </span>
-                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#222', lineHeight: 1.2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', maxWidth: '100%', textAlign: 'center' }}>
-                    {field?.name ?? ''}
-                    {field?.readOnly && <span style={{ fontSize: '10px', marginLeft: 2, opacity: 0.6 }}>🔒</span>}
-                    {sortConfig?.fieldIndex === vc.index && (
-                      <span style={{ marginLeft: 3, fontSize: '10px', color: '#217346' }}>
-                        {sortConfig.direction === 'asc' ? '▲' : '▼'}
+                  {renamingColId === field?.id ? (
+                    <input
+                      ref={renameInputRef}
+                      value={renameValue}
+                      onChange={e => setRenameValue(e.target.value)}
+                      onBlur={commitRename}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { e.preventDefault(); commitRename() }
+                        if (e.key === 'Escape') { e.preventDefault(); setRenamingColId(null) }
+                      }}
+                      style={{
+                        width: '90%', fontSize: `${Math.round(12 * zoomLevel)}px`,
+                        border: '1px solid #217346', borderRadius: 2, padding: '1px 4px',
+                        textAlign: 'center', outline: 'none', fontWeight: 600,
+                      }}
+                      autoFocus
+                      onClick={e => e.stopPropagation()}
+                    />
+                  ) : field?.name ? (
+                    <>
+                      <span style={{ fontSize: `${Math.round(10 * zoomLevel)}px`, color: '#999', lineHeight: 1, letterSpacing: '0.5px' }}>
+                        {colLabel(vc.index)}
                       </span>
-                    )}
-                  </span>
+                      <span style={{ fontSize: `${Math.round(12 * zoomLevel)}px`, fontWeight: 600, color: '#222', lineHeight: 1.2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', maxWidth: '100%', textAlign: 'center' }}>
+                        {field.name}
+                        {field.readOnly && <span style={{ fontSize: `${Math.round(10 * zoomLevel)}px`, marginLeft: 2, opacity: 0.6 }}>🔒</span>}
+                        {sortConfig?.fieldIndex === vc.index && (
+                          <span style={{ marginLeft: 3, fontSize: `${Math.round(10 * zoomLevel)}px`, color: '#217346' }}>
+                            {sortConfig.direction === 'asc' ? '▲' : '▼'}
+                          </span>
+                        )}
+                      </span>
+                    </>
+                  ) : (
+                    /* No name — show only the letter, larger, like Excel */
+                    <span style={{ fontSize: `${Math.round(13 * zoomLevel)}px`, fontWeight: 600, color: '#444', letterSpacing: '0.5px' }}>
+                      {colLabel(vc.index)}
+                      {sortConfig?.fieldIndex === vc.index && (
+                        <span style={{ marginLeft: 3, fontSize: `${Math.round(10 * zoomLevel)}px`, color: '#217346' }}>
+                          {sortConfig.direction === 'asc' ? '▲' : '▼'}
+                        </span>
+                      )}
+                    </span>
+                  )}
                   {/* Resize handle */}
                   <div
                     style={{
@@ -1125,8 +1219,8 @@ const VirtualGrid = () => {
 
           {/* Frozen column header overlay — always visible, covers frozen cols */}
           {frozenColCount > 0 && visibleFields.slice(0, frozenColCount).map((field, idx) => {
-            const colW = colWidths[idx] ?? DEFAULT_COL_WIDTH
-            const leftOffset = visibleFields.slice(0, idx).reduce((sum, _, i) => sum + (colWidths[i] ?? DEFAULT_COL_WIDTH), 0)
+            const colW = colWidths[idx] ?? defaultColW
+            const leftOffset = visibleFields.slice(0, idx).reduce((sum, _, i) => sum + (colWidths[i] ?? defaultColW), 0)
             const isColActive = activeCell?.colIndex === idx
             return (
               <div
@@ -1152,20 +1246,57 @@ const VirtualGrid = () => {
                   gap: 1,
                 }}
                 onClick={() => { if (!isResizingActiveRef.current) toggleSort(idx) }}
+                onDoubleClick={() => {
+                  if (isResizingActiveRef.current) return
+                  setRenamingColId(field.id)
+                  setRenameValue(field.name)
+                  setTimeout(() => renameInputRef.current?.select(), 0)
+                }}
                 onContextMenu={e => handleColHeaderContextMenu(idx, e)}
               >
-                <span style={{ fontSize: '11px', color: '#5a8a5a', lineHeight: 1, letterSpacing: '0.5px', fontWeight: 500 }}>
-                  {colLabel(idx)}
-                </span>
-                <span style={{ fontSize: '12px', fontWeight: 600, color: '#1a4a1a', lineHeight: 1.2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', maxWidth: '100%', textAlign: 'center' }}>
-                  {field.name}
-                  {field.readOnly && <span style={{ fontSize: '10px', marginLeft: 2, opacity: 0.6 }}>🔒</span>}
-                  {sortConfig?.fieldIndex === idx && (
-                    <span style={{ marginLeft: 3, fontSize: '10px', color: '#217346' }}>
-                      {sortConfig.direction === 'asc' ? '▲' : '▼'}
+                {renamingColId === field.id ? (
+                  <input
+                    ref={renameInputRef}
+                    value={renameValue}
+                    onChange={e => setRenameValue(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') { e.preventDefault(); commitRename() }
+                      if (e.key === 'Escape') { e.preventDefault(); setRenamingColId(null) }
+                    }}
+                    style={{
+                      width: '90%', fontSize: `${Math.round(12 * zoomLevel)}px`,
+                      border: '1px solid #217346', borderRadius: 2, padding: '1px 4px',
+                      textAlign: 'center', outline: 'none', fontWeight: 600,
+                    }}
+                    autoFocus
+                    onClick={e => e.stopPropagation()}
+                  />
+                ) : field.name ? (
+                  <>
+                    <span style={{ fontSize: `${Math.round(10 * zoomLevel)}px`, color: '#5a8a5a', lineHeight: 1, letterSpacing: '0.5px' }}>
+                      {colLabel(idx)}
                     </span>
-                  )}
-                </span>
+                    <span style={{ fontSize: `${Math.round(12 * zoomLevel)}px`, fontWeight: 600, color: '#1a4a1a', lineHeight: 1.2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', maxWidth: '100%', textAlign: 'center' }}>
+                      {field.name}
+                      {field.readOnly && <span style={{ fontSize: `${Math.round(10 * zoomLevel)}px`, marginLeft: 2, opacity: 0.6 }}>🔒</span>}
+                      {sortConfig?.fieldIndex === idx && (
+                        <span style={{ marginLeft: 3, fontSize: `${Math.round(10 * zoomLevel)}px`, color: '#217346' }}>
+                          {sortConfig.direction === 'asc' ? '▲' : '▼'}
+                        </span>
+                      )}
+                    </span>
+                  </>
+                ) : (
+                  <span style={{ fontSize: `${Math.round(13 * zoomLevel)}px`, fontWeight: 600, color: '#1a4a1a', letterSpacing: '0.5px' }}>
+                    {colLabel(idx)}
+                    {sortConfig?.fieldIndex === idx && (
+                      <span style={{ marginLeft: 3, fontSize: `${Math.round(10 * zoomLevel)}px`, color: '#217346' }}>
+                        {sortConfig.direction === 'asc' ? '▲' : '▼'}
+                      </span>
+                    )}
+                  </span>
+                )}
                 {/* Resize handle */}
                 <div
                   style={{
@@ -1220,7 +1351,7 @@ const VirtualGrid = () => {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    fontSize: '12px',
+                    fontSize: `${Math.round(12 * zoomLevel)}px`,
                     color: '#666',
                     userSelect: 'none',
                     boxSizing: 'border-box',
@@ -1235,11 +1366,12 @@ const VirtualGrid = () => {
           {/* Cells */}
           {rowVirtualizer.getVirtualItems().map(vr => {
             const actualRowIndex = filteredIndices[vr.index]
+            const isFrozenRow = vr.index < frozenRowCount
             return columnVirtualizer.getVirtualItems().map(vc => {
               const field = visibleFields[vc.index] ?? null
               const active = isActiveCell(actualRowIndex, vc.index)
               const selected = isSelected(actualRowIndex, vc.index)
-              const colW = colWidths[vc.index] ?? DEFAULT_COL_WIDTH
+              const colW = colWidths[vc.index] ?? defaultColW
               const isSelectEditing = active && isEditing && (field?.type === 'single_select' || field?.type === 'multiple_select')
               const isFrozen = vc.index < frozenColCount
 
@@ -1273,7 +1405,7 @@ const VirtualGrid = () => {
                 <div
                   key={`c-${vr.index}-${vc.index}`}
                   style={{
-                    position: isFrozen ? 'sticky' : 'absolute',
+                    position: (isFrozen || isFrozenRow) ? 'sticky' : 'absolute',
                     top: vr.start,
                     left: leftPos,
                     width: colW,
@@ -1281,17 +1413,20 @@ const VirtualGrid = () => {
                     borderRight: isFrozen && vc.index === frozenColCount - 1
                       ? '2px solid #217346'
                       : '1px solid #e1dfdd',
-                    borderBottom: '1px solid #e1dfdd',
+                    borderBottom: isFrozenRow && vr.index === frozenRowCount - 1
+                      ? '2px solid #217346'
+                      : '1px solid #e1dfdd',
                     backgroundColor: fmt?.bgColor ?? (selected && !active
-                      ? (isFrozen ? '#c8dbc8' : '#d9e8d9')
-                      : (isFrozen ? '#f9fef9' : (field?.readOnly ? '#f8f8f8' : 'white'))),
+                      ? (isFrozen || isFrozenRow ? '#c8dbc8' : '#d9e8d9')
+                      : (isFrozen || isFrozenRow ? '#f9fef9' : (field?.readOnly ? '#f8f8f8' : 'white'))),
                     color: fmt?.textColor ?? undefined,
                     fontWeight: fmt?.bold ? 'bold' : undefined,
                     fontStyle: fmt?.italic ? 'italic' : undefined,
                     textAlign: fmt?.align ?? undefined,
+                    fontSize: Math.round(13 * zoomLevel),
                     outline: active ? '2px solid #217346' : isCut ? '2px dashed #f59e0b' : 'none',
                     outlineOffset: '-2px',
-                    zIndex: active ? 4 : isFrozen ? 3 : 0,
+                    zIndex: active ? 4 : (isFrozen && isFrozenRow) ? 5 : (isFrozen || isFrozenRow) ? 3 : 0,
                     display: 'flex',
                     alignItems: 'center',
                     userSelect: 'none',
@@ -1308,6 +1443,8 @@ const VirtualGrid = () => {
                     rowIndex={actualRowIndex}
                     field={field}
                     isSelectEditing={isSelectEditing}
+                    numberFormat={fmt?.numberFormat}
+                    fontSize={Math.round(13 * zoomLevel)}
                   />
                   {hasComment && (
                     <div
@@ -1386,7 +1523,7 @@ const VirtualGrid = () => {
 
             if (!vRowStart || !vRowEnd || !vColStart || !vColEnd) return null
 
-            const colW = colWidths[dstEndCol] ?? DEFAULT_COL_WIDTH
+            const colW = colWidths[dstEndCol] ?? defaultColW
 
             return (
               <div style={{

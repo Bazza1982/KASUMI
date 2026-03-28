@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { useWordoAccessStore } from '../../modules/wordo-shell/stores/useWordoAccessStore'
 
 const reset = (mode: 'data-entry' | 'analyst' | 'admin' = 'analyst') => {
-  useWordoAccessStore.setState({ mode, ...useWordoAccessStore.getState() })
+  useWordoAccessStore.setState({ ...useWordoAccessStore.getState(), mode })
   useWordoAccessStore.getState().setMode(mode)
 }
 

@@ -1,0 +1,492 @@
+{
+  "description": "KASUMI AI-Native API — Tools for AI agents to operate the KASUMI Intelligent Workspace Platform. Base URL: http://localhost:3001",
+  "tools": [
+    {
+      "name": "kasumi_health",
+      "description": "Check KASUMI API server health. Returns server status, uptime, and shell summaries.",
+      "parameters": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "kasumi_get_shell",
+      "description": "Get the currently active KASUMI shell (nexcel or wordo).",
+      "parameters": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "kasumi_switch_shell",
+      "description": "Switch the active KASUMI shell between nexcel (spreadsheet) and wordo (document).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "shell": { "type": "string", "enum": ["nexcel", "wordo"], "description": "Target shell to activate" }
+        },
+        "required": ["shell"]
+      }
+    },
+
+    {
+      "name": "kasumi_nexcel_get_data",
+      "description": "Retrieve rows from the NEXCEL spreadsheet. Supports search, filter, sort, and pagination.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "search": { "type": "string", "description": "Full-text search across all fields" },
+          "page": { "type": "integer", "default": 1, "description": "Page number (1-based)" },
+          "size": { "type": "integer", "default": 100, "description": "Rows per page (max 500)" },
+          "sort_field": { "type": "integer", "description": "Field ID to sort by" },
+          "sort_dir": { "type": "string", "enum": ["asc", "desc"], "default": "asc" },
+          "filter": {
+            "type": "array",
+            "description": "Array of filter rules",
+            "items": {
+              "type": "object",
+              "properties": {
+                "fieldId": { "type": "integer" },
+                "type": { "type": "string", "enum": ["contains", "equals", "is_empty", "not_empty", "gt", "lt"] },
+                "value": { "type": "string" }
+              },
+              "required": ["fieldId", "type", "value"]
+            }
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "kasumi_nexcel_get_columns",
+      "description": "Get all column (field) definitions from the NEXCEL spreadsheet, including field IDs, names, types, and select options.",
+      "parameters": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "kasumi_nexcel_insert_row",
+      "description": "Insert a new row into the NEXCEL spreadsheet.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "fields": {
+            "type": "object",
+            "description": "Object mapping fieldId (as string key) to value. Get fieldIds from kasumi_nexcel_get_columns first. Example: {\"1\": \"Task name\", \"2\": \"In Progress\", \"7\": 1500}"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "kasumi_nexcel_update_row",
+      "description": "Update specific fields in an existing NEXCEL row by row ID.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "description": "Row ID to update" },
+          "fields": { "type": "object", "description": "Fields to update: fieldId → new value" }
+        },
+        "required": ["id", "fields"]
+      }
+    },
+    {
+      "name": "kasumi_nexcel_delete_row",
+      "description": "Delete a row from NEXCEL by row ID.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "description": "Row ID to delete" }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "name": "kasumi_nexcel_batch_upsert",
+      "description": "Batch insert or update multiple rows in NEXCEL. If 'id' is provided, updates the existing row; otherwise inserts a new row.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ops": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "integer", "description": "Row ID for update (omit for insert)" },
+                "fields": { "type": "object" }
+              },
+              "required": ["fields"]
+            }
+          }
+        },
+        "required": ["ops"]
+      }
+    },
+    {
+      "name": "kasumi_nexcel_search",
+      "description": "Full-text search across all NEXCEL rows and fields.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "q": { "type": "string", "description": "Search query" }
+        },
+        "required": ["q"]
+      }
+    },
+    {
+      "name": "kasumi_nexcel_add_column",
+      "description": "Add a new column to the NEXCEL spreadsheet.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Column name" },
+          "type": {
+            "type": "string",
+            "enum": ["text", "long_text", "number", "boolean", "date", "email", "url", "phone_number", "single_select", "multiple_select"],
+            "description": "Field type"
+          },
+          "selectOptions": {
+            "type": "array",
+            "description": "For single_select / multiple_select types",
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": { "type": "string" },
+                "color": { "type": "string" }
+              }
+            }
+          }
+        },
+        "required": ["name", "type"]
+      }
+    },
+    {
+      "name": "kasumi_nexcel_sort",
+      "description": "Sort NEXCEL rows by a specific field.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "fieldId": { "type": "integer", "description": "Field ID to sort by" },
+          "direction": { "type": "string", "enum": ["asc", "desc"] }
+        },
+        "required": ["fieldId", "direction"]
+      }
+    },
+    {
+      "name": "kasumi_nexcel_filter",
+      "description": "Filter NEXCEL rows by one or more rules.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "fieldId": { "type": "integer" },
+                "type": { "type": "string", "enum": ["contains", "equals", "is_empty", "not_empty", "gt", "lt"] },
+                "value": { "type": "string" }
+              },
+              "required": ["fieldId", "type", "value"]
+            }
+          }
+        },
+        "required": ["filter"]
+      }
+    },
+    {
+      "name": "kasumi_nexcel_set_format",
+      "description": "Apply visual formatting to a specific NEXCEL cell (bold, italic, color, alignment).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "rowId": { "type": "integer" },
+          "fieldId": { "type": "integer" },
+          "format": {
+            "type": "object",
+            "properties": {
+              "bold": { "type": "boolean" },
+              "italic": { "type": "boolean" },
+              "align": { "type": "string", "enum": ["left", "center", "right"] },
+              "bgColor": { "type": "string", "description": "CSS hex color e.g. #fef08a" },
+              "textColor": { "type": "string", "description": "CSS hex color" }
+            }
+          }
+        },
+        "required": ["rowId", "fieldId", "format"]
+      }
+    },
+    {
+      "name": "kasumi_nexcel_add_conditional_rule",
+      "description": "Add a conditional formatting rule to NEXCEL. Rows matching the condition will be highlighted.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "fieldId": { "type": "integer" },
+          "condition": { "type": "string", "enum": ["equals", "contains", "gt", "lt", "is_empty"] },
+          "value": { "type": "string" },
+          "bgColor": { "type": "string", "description": "Background color when condition matches" },
+          "textColor": { "type": "string" },
+          "bold": { "type": "boolean" }
+        },
+        "required": ["fieldId", "condition", "value"]
+      }
+    },
+    {
+      "name": "kasumi_nexcel_import_csv",
+      "description": "Import rows from a CSV string into NEXCEL. First row must be column names matching existing field names.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "csv": { "type": "string", "description": "Full CSV content with header row" }
+        },
+        "required": ["csv"]
+      }
+    },
+    {
+      "name": "kasumi_nexcel_export_csv",
+      "description": "Export all NEXCEL data as a CSV string.",
+      "parameters": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "kasumi_nexcel_undo",
+      "description": "Undo the last NEXCEL operation (supports up to 50 steps).",
+      "parameters": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "kasumi_nexcel_redo",
+      "description": "Redo the previously undone NEXCEL operation.",
+      "parameters": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "kasumi_nexcel_set_access_mode",
+      "description": "Change the NEXCEL access mode, which controls what operations are permitted.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["data-entry", "analyst", "admin"],
+            "description": "data-entry: edit only | analyst: edit + import/export/delete | admin: full access"
+          }
+        },
+        "required": ["mode"]
+      }
+    },
+    {
+      "name": "kasumi_nexcel_state",
+      "description": "Get a summary snapshot of the NEXCEL state: row count, field count, access mode, etc.",
+      "parameters": { "type": "object", "properties": {}, "required": [] }
+    },
+
+    {
+      "name": "kasumi_wordo_get_document",
+      "description": "Get the full WORDO document as structured JSON (KasumiDocument with sections and blocks).",
+      "parameters": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "kasumi_wordo_get_markdown",
+      "description": "Get the WORDO document content as Markdown text. Ideal for AI reading and processing.",
+      "parameters": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "kasumi_wordo_set_title",
+      "description": "Set the WORDO document title.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "New document title" }
+        },
+        "required": ["title"]
+      }
+    },
+    {
+      "name": "kasumi_wordo_import_markdown",
+      "description": "Replace the WORDO document content by importing from a Markdown string.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "markdown": { "type": "string", "description": "Full Markdown content" },
+          "title": { "type": "string", "description": "Optional new document title" }
+        },
+        "required": ["markdown"]
+      }
+    },
+    {
+      "name": "kasumi_wordo_get_outline",
+      "description": "Get the WORDO document outline — a list of all headings with their levels, section IDs, and block IDs.",
+      "parameters": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "kasumi_wordo_insert_block",
+      "description": "Insert a new content block into a WORDO document section.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sectionId": { "type": "string", "description": "Target section ID. Get from kasumi_wordo_get_document." },
+          "type": {
+            "type": "string",
+            "enum": ["paragraph", "heading", "list_item", "table", "code_block", "blockquote", "page_break", "nexcel_embed"],
+            "description": "Block type to insert"
+          },
+          "content": { "type": "array", "description": "Array of inline content objects: [{text: '...'}, {text: '...', marks: {bold: true}}]" },
+          "level": { "type": "integer", "description": "Heading level 1-6 (for heading type)" },
+          "listType": { "type": "string", "enum": ["bullet", "ordered"], "description": "For list_item type" },
+          "afterBlockId": { "type": "string", "description": "Insert after this block ID. Omit to append at end." }
+        },
+        "required": ["sectionId", "type"]
+      }
+    },
+    {
+      "name": "kasumi_wordo_update_block",
+      "description": "Update a WORDO block content by its block ID.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "blockId": { "type": "string", "description": "Block ID to update. Get from kasumi_wordo_get_document." },
+          "content": { "type": "array", "description": "New inline content array" },
+          "level": { "type": "integer", "description": "For heading blocks" }
+        },
+        "required": ["blockId"]
+      }
+    },
+    {
+      "name": "kasumi_wordo_delete_block",
+      "description": "Delete a WORDO block by its block ID.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "blockId": { "type": "string", "description": "Block ID to delete" }
+        },
+        "required": ["blockId"]
+      }
+    },
+    {
+      "name": "kasumi_wordo_add_section",
+      "description": "Add a new section to the WORDO document.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "after": { "type": "string", "description": "Section ID to insert after. Omit to append at end." }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "kasumi_wordo_get_comments",
+      "description": "List all comments in the WORDO document.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "resolved": { "type": "boolean", "description": "Filter by resolved state. Omit for all." }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "kasumi_wordo_add_comment",
+      "description": "Add a comment to a WORDO document section.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sectionId": { "type": "string", "description": "Section to attach comment to" },
+          "blockId": { "type": "string", "description": "Optional: specific block to anchor comment to" },
+          "text": { "type": "string", "description": "Comment text content" },
+          "author": { "type": "string", "description": "Author name", "default": "AI Agent" }
+        },
+        "required": ["sectionId", "text"]
+      }
+    },
+    {
+      "name": "kasumi_wordo_delete_comment",
+      "description": "Delete a comment from the WORDO document by ID.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Comment ID to delete" }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "name": "kasumi_wordo_get_track_changes",
+      "description": "Get WORDO track changes state and list of pending changes.",
+      "parameters": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "kasumi_wordo_accept_changes",
+      "description": "Accept one or all pending track changes in WORDO.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Specific change ID to accept" },
+          "all": { "type": "boolean", "description": "Set true to accept all pending changes" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "kasumi_wordo_reject_changes",
+      "description": "Reject one or all pending track changes in WORDO.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Specific change ID to reject" },
+          "all": { "type": "boolean", "description": "Set true to reject all pending changes" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "kasumi_wordo_state",
+      "description": "Get a summary snapshot of the WORDO document state: title, section count, comment count, etc.",
+      "parameters": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "kasumi_wordo_set_access_mode",
+      "description": "Change the WORDO access mode.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["data-entry", "analyst", "admin"]
+          }
+        },
+        "required": ["mode"]
+      }
+    }
+  ],
+  "endpoint_map": {
+    "kasumi_health":                         { "method": "GET",    "path": "/api/health" },
+    "kasumi_get_shell":                      { "method": "GET",    "path": "/api/shell" },
+    "kasumi_switch_shell":                   { "method": "PUT",    "path": "/api/shell", "body_fields": ["shell"] },
+    "kasumi_nexcel_get_data":                { "method": "GET",    "path": "/api/nexcel/data", "query_fields": ["search", "page", "size", "sort_field", "sort_dir", "filter"] },
+    "kasumi_nexcel_get_columns":             { "method": "GET",    "path": "/api/nexcel/columns" },
+    "kasumi_nexcel_insert_row":              { "method": "POST",   "path": "/api/nexcel/rows", "body_fields": ["fields"] },
+    "kasumi_nexcel_update_row":              { "method": "PUT",    "path": "/api/nexcel/rows/{id}", "path_fields": ["id"], "body_fields": ["fields"] },
+    "kasumi_nexcel_delete_row":              { "method": "DELETE", "path": "/api/nexcel/rows/{id}", "path_fields": ["id"] },
+    "kasumi_nexcel_batch_upsert":            { "method": "POST",   "path": "/api/nexcel/rows/batch", "body_fields": ["ops"] },
+    "kasumi_nexcel_search":                  { "method": "GET",    "path": "/api/nexcel/search", "query_fields": ["q"] },
+    "kasumi_nexcel_add_column":              { "method": "POST",   "path": "/api/nexcel/columns", "body_fields": ["name", "type", "selectOptions"] },
+    "kasumi_nexcel_sort":                    { "method": "POST",   "path": "/api/nexcel/sort", "body_fields": ["fieldId", "direction"] },
+    "kasumi_nexcel_filter":                  { "method": "POST",   "path": "/api/nexcel/filter", "body_fields": ["filter"] },
+    "kasumi_nexcel_set_format":              { "method": "POST",   "path": "/api/nexcel/format", "body_fields": ["rowId", "fieldId", "format"] },
+    "kasumi_nexcel_add_conditional_rule":    { "method": "POST",   "path": "/api/nexcel/conditional-format", "body_fields": ["fieldId", "condition", "value", "bgColor", "textColor", "bold"] },
+    "kasumi_nexcel_import_csv":              { "method": "POST",   "path": "/api/nexcel/import", "body_fields": ["csv"] },
+    "kasumi_nexcel_export_csv":              { "method": "GET",    "path": "/api/nexcel/export?format=csv" },
+    "kasumi_nexcel_undo":                    { "method": "POST",   "path": "/api/nexcel/undo" },
+    "kasumi_nexcel_redo":                    { "method": "POST",   "path": "/api/nexcel/redo" },
+    "kasumi_nexcel_set_access_mode":         { "method": "PUT",    "path": "/api/nexcel/access-mode", "body_fields": ["mode"] },
+    "kasumi_nexcel_state":                   { "method": "GET",    "path": "/api/nexcel/state" },
+    "kasumi_wordo_get_document":             { "method": "GET",    "path": "/api/wordo/document" },
+    "kasumi_wordo_get_markdown":             { "method": "GET",    "path": "/api/wordo/document/markdown" },
+    "kasumi_wordo_set_title":                { "method": "PUT",    "path": "/api/wordo/document", "body_fields": ["title"] },
+    "kasumi_wordo_import_markdown":          { "method": "PUT",    "path": "/api/wordo/document/markdown", "body_fields": ["markdown", "title"] },
+    "kasumi_wordo_get_outline":              { "method": "GET",    "path": "/api/wordo/outline" },
+    "kasumi_wordo_insert_block":             { "method": "POST",   "path": "/api/wordo/blocks", "body_fields": ["sectionId", "type", "content", "level", "listType", "afterBlockId"] },
+    "kasumi_wordo_update_block":             { "method": "PUT",    "path": "/api/wordo/blocks/{id}", "path_fields": ["blockId"], "body_fields": ["content", "level"] },
+    "kasumi_wordo_delete_block":             { "method": "DELETE", "path": "/api/wordo/blocks/{id}", "path_fields": ["blockId"] },
+    "kasumi_wordo_add_section":              { "method": "POST",   "path": "/api/wordo/sections", "body_fields": ["after"] },
+    "kasumi_wordo_get_comments":             { "method": "GET",    "path": "/api/wordo/comments", "query_fields": ["resolved"] },
+    "kasumi_wordo_add_comment":              { "method": "POST",   "path": "/api/wordo/comments", "body_fields": ["sectionId", "blockId", "text", "author"] },
+    "kasumi_wordo_delete_comment":           { "method": "DELETE", "path": "/api/wordo/comments/{id}", "path_fields": ["id"] },
+    "kasumi_wordo_get_track_changes":        { "method": "GET",    "path": "/api/wordo/track-changes" },
+    "kasumi_wordo_accept_changes":           { "method": "POST",   "path": "/api/wordo/track-changes/accept", "body_fields": ["id", "all"] },
+    "kasumi_wordo_reject_changes":           { "method": "POST",   "path": "/api/wordo/track-changes/reject", "body_fields": ["id", "all"] },
+    "kasumi_wordo_state":                    { "method": "GET",    "path": "/api/wordo/state" },
+    "kasumi_wordo_set_access_mode":          { "method": "PUT",    "path": "/api/wordo/access-mode", "body_fields": ["mode"] }
+  }
+}
