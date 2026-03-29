@@ -40,6 +40,8 @@ class ToolRegistry {
         name: t.name,
         description: t.description,
         inputSchema: t.inputSchema,
+        ...(t.outputSchema !== undefined && { outputSchema: t.outputSchema }),
+        ...(t.readOnly      !== undefined && { readOnly:      t.readOnly }),
       }))
   }
 

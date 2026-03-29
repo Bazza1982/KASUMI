@@ -76,6 +76,8 @@ async function dispatch(
           instructions: 'KASUMI MCP Server — Nexcel spreadsheet and Wordo document tools. Use tools/list to discover available tools.',
         }
         initializedSessions.add(ctx.sessionId)
+        // Signal to the HTTP handler that it should echo back Mcp-Session-Id
+        ctx._initializeSessionId = ctx.sessionId
         return makeSuccess(id, result)
       }
 
@@ -226,7 +228,10 @@ async function dispatch(
 // ─── HTTP handler: POST /mcp ──────────────────────────────────────────────────
 
 export async function handleMcpPost(req: Request, res: Response): Promise<void> {
-  const sessionId = (req.headers['mcp-session-id'] as string) || `http-${Date.now()}`
+  // Session ID: prefer header (Streamable HTTP), fall back to query param (SSE transport), then generate
+  const sessionId = (req.headers['mcp-session-id'] as string)
+    || (req.query['sessionId'] as string)
+    || `http-${Date.now()}`
   const apiKey = (req.headers['x-kasumi-key'] as string) || undefined
   const agentId = (req.headers['x-kasumi-agent'] as string) || undefined
   const tier = resolvePermission(apiKey)
@@ -267,9 +272,14 @@ export async function handleMcpPost(req: Request, res: Response): Promise<void> 
 
   const response = await handleSingle(body, ctx)
   if (response !== null) {
+    // Echo session ID after a successful initialize so clients can track it
+    if (ctx._initializeSessionId) {
+      res.setHeader('Mcp-Session-Id', ctx._initializeSessionId)
+    }
     res.json(response)
   } else {
-    res.status(204).end()
+    // 202 Accepted for notifications (no body) — per MCP streamable HTTP spec
+    res.status(202).end()
   }
 }
 
@@ -306,9 +316,15 @@ export function handleMcpSse(req: Request, res: Response): void {
   res.flushHeaders()
 
   serverStats.incSseConnection()
-  // Send initial endpoint event (MCP SSE spec)
+  // Send initial endpoint event per MCP SSE transport spec.
+  // data must be the URI the client should POST messages to, with the
+  // session ID embedded so the server can correlate SSE stream ↔ POST requests.
   const sessionId = `sse-${Date.now()}-${Math.random().toString(36).slice(2)}`
-  res.write(`event: endpoint\ndata: ${JSON.stringify({ sessionId })}\n\n`)
+  const proto = req.protocol ?? 'http'
+  const host  = req.get('host') ?? 'localhost'
+  const messageEndpoint = `${proto}://${host}/mcp?sessionId=${sessionId}`
+  res.write(`event: endpoint\ndata: ${messageEndpoint}\n\n`)
+  initializedSessions.add(sessionId)  // pre-authorize SSE sessions
 
   sseClients.add(res)
 

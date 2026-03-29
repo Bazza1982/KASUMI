@@ -9,6 +9,7 @@ import { openApiSpec } from './openapi/spec'
 import { startMcpServer } from './mcp/server'
 import { handleMcpPost, handleMcpSse } from './mcp/router'
 import { attachWsServer } from './mcp/services/WsServer'
+import { mcpOriginGuard } from './mcp/originCheck'
 
 const app = express()
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001
@@ -35,11 +36,13 @@ app.use('/api/nexcel', nexcelRouter)
 app.use('/api/wordo', wordoRouter)
 
 // ── MCP routes ────────────────────────────────────────────────────────────────
+// Origin guard applied to all MCP endpoints to prevent DNS rebinding.
 // Standard MCP transport: POST /mcp (client→server), GET /mcp/sse (server→client)
 // Also available at /api/mcp/v1/rpc for REST-style clients
-app.post('/mcp', handleMcpPost)
-app.get('/mcp/sse', handleMcpSse)
-app.post('/api/mcp/v1/rpc', handleMcpPost)
+app.options('/mcp', mcpOriginGuard, (_req, res) => res.status(204).end())
+app.post('/mcp', mcpOriginGuard, handleMcpPost)
+app.get('/mcp/sse', mcpOriginGuard, handleMcpSse)
+app.post('/api/mcp/v1/rpc', mcpOriginGuard, handleMcpPost)
 
 // Root redirect to docs
 app.get('/', (_req, res) => {

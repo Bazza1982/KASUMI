@@ -1,5 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws'
 import type { Server } from 'http'
+import { isWsOriginAllowed } from '../originCheck'
 
 /**
  * WsServer — broadcasts MCP mutation events to connected frontend clients.
@@ -23,9 +24,16 @@ export function attachWsServer(httpServer: Server): void {
   if (wss) return  // already attached
   wss = new WebSocketServer({ server: httpServer, path: '/mcp/events' })
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
+    // Reject connections from disallowed origins (DNS rebinding protection)
+    const origin = req.headers['origin'] as string | undefined
+    if (!isWsOriginAllowed(origin)) {
+      ws.close(1008, 'Origin not allowed')
+      return
+    }
+
     // Send a welcome event so the client knows it's live
-    sendToClient(ws, 'connected', { server: 'kasumi-mcp-server', version: '1.0.0' })
+    sendToClient(ws, 'connected', { server: 'kasumi-mcp-server', version: '2.0.0' })
 
     ws.on('error', () => {/* ignore — client disconnect */})
   })

@@ -8,6 +8,8 @@ export interface McpRequestContext {
   agentId?: string
   /** Resolved permission tier for this request ('read' | 'write' | 'admin') */
   permissionTier?: string
+  /** Set by the initialize handler so the HTTP layer can echo Mcp-Session-Id */
+  _initializeSessionId?: string
 }
 
 // ─── JSON-RPC 2.0 ─────────────────────────────────────────────────────────────
@@ -105,6 +107,12 @@ export interface McpToolDefinition {
   version: string
   description: string
   inputSchema: McpToolInputSchema
+  /** Machine-readable description of the tool's return value structure. */
+  outputSchema?: Record<string, unknown>
+  /** Whether this tool requires authentication (true by default when keys are configured). */
+  requiresAuth?: boolean
+  /** Whether this tool only reads data and never mutates state. */
+  readOnly?: boolean
   deprecated?: boolean
   replacedBy?: string
   handler: (args: Record<string, unknown>, ctx: McpRequestContext) => Promise<McpToolResult>
@@ -125,6 +133,8 @@ export interface McpToolListEntry {
   name: string
   description: string
   inputSchema: McpToolInputSchema
+  outputSchema?: Record<string, unknown>
+  readOnly?: boolean
 }
 
 // ─── Resource definitions ─────────────────────────────────────────────────────
