@@ -5,6 +5,7 @@ frontend/node_modules/
 # Build output
 frontend/dist/
 frontend/dist-ssr/
+api-server/dist/
 
 # Test coverage
 frontend/coverage/
