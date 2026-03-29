@@ -13,6 +13,8 @@ const SHORTCUTS = [
   ]},
   { category: 'Selection', items: [
     ['Shift+Arrow', 'Extend selection'],
+    ['Formula + Arrow', 'Move formula reference target'],
+    ['Formula + Shift+Arrow', 'Extend formula reference range'],
     ['Ctrl+A', 'Select all'],
     ['Shift+Click', 'Select range'],
     ['Click+Drag', 'Select range'],

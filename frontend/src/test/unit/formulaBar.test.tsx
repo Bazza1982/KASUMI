@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import React from 'react'
 import FormulaBar from '../../modules/excel-shell/components/FormulaBar'
 import { useExcelStore } from '../../modules/excel-shell/stores/useExcelStore'
@@ -15,6 +15,9 @@ const resetState = () => {
     anchorCell: { rowIndex: 0, colIndex: 0 },
     isEditing: false,
     editValue: '',
+    formulaSelectionStart: 0,
+    formulaSelectionEnd: 0,
+    formulaEditor: null,
     statusText: 'Ready',
     searchText: '',
     sortConfig: null,
@@ -129,22 +132,224 @@ describe('FormulaBar', () => {
   it('syncs the trailing formula reference when the selection changes', () => {
     const { rerender } = render(<FormulaBar />)
 
-    useExcelStore.setState({
-      isEditing: true,
-      editValue: '=SUM(',
-      activeCell: { rowIndex: 0, colIndex: 0 },
-      selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
+    act(() => {
+      useExcelStore.setState({
+        isEditing: true,
+        editValue: '=SUM(',
+        activeCell: { rowIndex: 0, colIndex: 0 },
+        selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
+      })
+      rerender(<FormulaBar />)
     })
-    rerender(<FormulaBar />)
 
     expect(useExcelStore.getState().editValue).toBe('=SUM(A1')
 
-    useExcelStore.setState({
-      activeCell: { rowIndex: 1, colIndex: 1 },
-      selection: { startRow: 0, startCol: 0, endRow: 1, endCol: 1 },
+    act(() => {
+      useExcelStore.setState({
+        activeCell: { rowIndex: 1, colIndex: 1 },
+        selection: { startRow: 0, startCol: 0, endRow: 1, endCol: 1 },
+      })
+      rerender(<FormulaBar />)
     })
-    rerender(<FormulaBar />)
 
     expect(useExcelStore.getState().editValue).toBe('=SUM(A1:B2')
+  })
+
+  it('appends a new formula argument after a comma when the selection changes', () => {
+    const { rerender } = render(<FormulaBar />)
+
+    act(() => {
+      useExcelStore.setState({
+        isEditing: true,
+        editValue: '=SUM(A1,',
+        activeCell: { rowIndex: 0, colIndex: 0 },
+        selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
+        anchorCell: { rowIndex: 0, colIndex: 0 },
+      })
+      rerender(<FormulaBar />)
+    })
+
+    act(() => {
+      useExcelStore.setState({
+        activeCell: { rowIndex: 1, colIndex: 1 },
+        selection: { startRow: 1, startCol: 1, endRow: 1, endCol: 1 },
+        anchorCell: { rowIndex: 1, colIndex: 1 },
+      })
+      rerender(<FormulaBar />)
+    })
+
+    expect(useExcelStore.getState().editValue).toBe('=SUM(A1,B2')
+  })
+
+  it('replaces the reference under the formula-bar cursor instead of always replacing the last argument', () => {
+    const { rerender } = render(<FormulaBar />)
+    const input = screen.getByRole('textbox') as HTMLInputElement
+
+    act(() => {
+      useExcelStore.setState({
+        isEditing: true,
+        editValue: '=SUM(A1,B2)',
+        activeCell: { rowIndex: 0, colIndex: 0 },
+        selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
+        anchorCell: { rowIndex: 0, colIndex: 0 },
+      })
+      rerender(<FormulaBar />)
+    })
+
+    fireEvent.focus(input)
+    input.setSelectionRange(6, 6)
+    fireEvent.select(input)
+
+    act(() => {
+      useExcelStore.setState({
+        activeCell: { rowIndex: 2, colIndex: 2 },
+        selection: { startRow: 2, startCol: 2, endRow: 2, endCol: 2 },
+        anchorCell: { rowIndex: 2, colIndex: 2 },
+      })
+      rerender(<FormulaBar />)
+    })
+
+    expect(useExcelStore.getState().editValue).toBe('=SUM(C3,B2)')
+  })
+
+  it('arrow keys in formula mode move the reference target instead of the text caret', () => {
+    const { rerender } = render(<FormulaBar />)
+    const input = screen.getByRole('textbox')
+
+    act(() => {
+      useExcelStore.setState({
+        isEditing: true,
+        editValue: '=SUM(A1',
+        activeCell: { rowIndex: 0, colIndex: 0 },
+        selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
+        anchorCell: { rowIndex: 0, colIndex: 0 },
+      })
+      rerender(<FormulaBar />)
+    })
+
+    fireEvent.focus(input)
+    fireEvent.keyDown(input, { key: 'ArrowRight' })
+
+    expect(useExcelStore.getState().activeCell).toEqual({ rowIndex: 0, colIndex: 1 })
+    expect(useExcelStore.getState().selection).toEqual({ startRow: 0, startCol: 1, endRow: 0, endCol: 1 })
+    expect(useExcelStore.getState().editValue).toBe('=SUM(B1')
+  })
+
+  it('shift plus arrow extends the referenced range in formula mode', () => {
+    const { rerender } = render(<FormulaBar />)
+    const input = screen.getByRole('textbox')
+
+    act(() => {
+      useExcelStore.setState({
+        isEditing: true,
+        editValue: '=SUM(A1',
+        activeCell: { rowIndex: 0, colIndex: 0 },
+        selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
+        anchorCell: { rowIndex: 0, colIndex: 0 },
+      })
+      rerender(<FormulaBar />)
+    })
+
+    fireEvent.focus(input)
+    fireEvent.keyDown(input, { key: 'ArrowRight', shiftKey: true })
+
+    expect(useExcelStore.getState().selection).toEqual({ startRow: 0, startCol: 0, endRow: 0, endCol: 1 })
+    expect(useExcelStore.getState().editValue).toBe('=SUM(A1:B1')
+  })
+
+  it('shows the active formula argument badge for the current cursor slot', () => {
+    const { rerender } = render(<FormulaBar />)
+    const input = screen.getByRole('textbox') as HTMLInputElement
+
+    act(() => {
+      useExcelStore.setState({
+        isEditing: true,
+        editValue: '=SUM(A1,B2)',
+        activeCell: { rowIndex: 0, colIndex: 0 },
+        selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
+        anchorCell: { rowIndex: 0, colIndex: 0 },
+      })
+      rerender(<FormulaBar />)
+    })
+
+    fireEvent.focus(input)
+    input.setSelectionRange(9, 9)
+    fireEvent.select(input)
+
+    expect(screen.getByText('Arg 2')).toBeInTheDocument()
+    expect(screen.getByText((_, element) => element?.textContent === 'SUM(number1, [number2])')).toBeInTheDocument()
+  })
+
+  it('keeps the argument badge in sync while grid inline editing owns the cursor', () => {
+    const { rerender } = render(<FormulaBar />)
+
+    act(() => {
+      useExcelStore.setState({
+        isEditing: true,
+        editValue: '=SUM(A1,B2)',
+        formulaEditor: 'grid',
+        formulaSelectionStart: 9,
+        formulaSelectionEnd: 9,
+        activeCell: { rowIndex: 0, colIndex: 0 },
+        selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
+        anchorCell: { rowIndex: 0, colIndex: 0 },
+      })
+      rerender(<FormulaBar />)
+    })
+
+    expect(screen.getByText('Arg 2')).toBeInTheDocument()
+    expect(screen.getByText((_, element) => element?.textContent === 'SUM(number1, [number2])')).toBeInTheDocument()
+  })
+
+  it('shows richer function signatures for common lookup functions', () => {
+    const { rerender } = render(<FormulaBar />)
+    const input = screen.getByRole('textbox') as HTMLInputElement
+
+    act(() => {
+      useExcelStore.setState({
+        isEditing: true,
+        editValue: '=XLOOKUP(A1,',
+        activeCell: { rowIndex: 0, colIndex: 0 },
+        selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
+        anchorCell: { rowIndex: 0, colIndex: 0 },
+      })
+      rerender(<FormulaBar />)
+    })
+
+    fireEvent.focus(input)
+    input.setSelectionRange(12, 12)
+    fireEvent.select(input)
+
+    expect(screen.getByText('Arg 2')).toBeInTheDocument()
+    expect(screen.getByText((_, element) => element?.textContent === 'XLOOKUP(lookup_value, lookup_array, return_array, [if_not_found], [match_mode], [search_mode])')).toBeInTheDocument()
+  })
+
+  it('replaces the grid-owned argument slot instead of defaulting to the formula tail', () => {
+    const { rerender } = render(<FormulaBar />)
+
+    act(() => {
+      useExcelStore.setState({
+        isEditing: true,
+        editValue: '=SUM(A1,B2)',
+        formulaEditor: 'grid',
+        formulaSelectionStart: 6,
+        formulaSelectionEnd: 6,
+        activeCell: { rowIndex: 0, colIndex: 0 },
+        selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
+        anchorCell: { rowIndex: 0, colIndex: 0 },
+      })
+      rerender(<FormulaBar />)
+    })
+
+    act(() => {
+      useExcelStore.setState({
+        activeCell: { rowIndex: 2, colIndex: 2 },
+        selection: { startRow: 2, startCol: 2, endRow: 2, endCol: 2 },
+        anchorCell: { rowIndex: 2, colIndex: 2 },
+      })
+      rerender(<FormulaBar />)
+    })
+
+    expect(useExcelStore.getState().editValue).toBe('=SUM(C3,B2)')
   })
 })

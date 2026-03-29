@@ -44,6 +44,10 @@ const ExcelShellRoute = ({ autoFocusTarget = 'grid', onSurfaceActivity }: ExcelS
     loadConditionalFormats()
   }, [])
 
+  useEffect(() => {
+    loadTables()
+  }, [loadTables])
+
   // ── Real-time MCP event sync ──────────────────────────────────────────────
   // When an AI agent mutates nexcelStore via MCP write tools, the server
   // broadcasts a WebSocket event. We reload the sheet from the API so the
@@ -131,7 +135,7 @@ const ExcelShellRoute = ({ autoFocusTarget = 'grid', onSurfaceActivity }: ExcelS
 
   return (
     <ErrorBoundary>
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#f3f2f1' }}>
+      <div data-testid="excel-shell" style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#f3f2f1' }}>
         {/* Classic menu bar */}
         <div className="nexcel-no-print" style={{
           display: 'flex', alignItems: 'center',

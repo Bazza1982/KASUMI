@@ -17,6 +17,10 @@ import {
   type McpToolResult,
 } from './types'
 
+function isJsonRpcResponse(value: JsonRpcResponse | null): value is JsonRpcResponse {
+  return value !== null
+}
+
 // ─── Server identity ──────────────────────────────────────────────────────────
 
 const SERVER_INFO = {
@@ -42,6 +46,10 @@ function makeError(id: string | number | null, code: number, message: string, da
   return { jsonrpc: '2.0', id, error: { code, message, data } }
 }
 
+export function makeJsonRpcError(id: string | number | null, code: number, message: string, data?: unknown): JsonRpcError {
+  return makeError(id, code, message, data)
+}
+
 function makeSuccess<T>(id: string | number | null, result: T): JsonRpcSuccess<T> {
   return { jsonrpc: '2.0', id, result }
 }
@@ -52,6 +60,11 @@ function textResult(text: string): McpToolResult {
 
 function errorResult(message: string): McpToolResult {
   return { content: [{ type: 'text', text: message }], isError: true }
+}
+
+function resolveRequestPermission(req: Request): import('./auth').PermissionTier | null {
+  const apiKey = (req.headers['x-kasumi-key'] as string) || undefined
+  return resolvePermission(apiKey)
 }
 
 // ─── Method dispatcher ────────────────────────────────────────────────────────
@@ -232,9 +245,8 @@ export async function handleMcpPost(req: Request, res: Response): Promise<void> 
   const sessionId = (req.headers['mcp-session-id'] as string)
     || (req.query['sessionId'] as string)
     || `http-${Date.now()}`
-  const apiKey = (req.headers['x-kasumi-key'] as string) || undefined
   const agentId = (req.headers['x-kasumi-agent'] as string) || undefined
-  const tier = resolvePermission(apiKey)
+  const tier = resolveRequestPermission(req)
 
   // Reject unknown keys when auth is configured
   if (!DEV_MODE && !tier) {
@@ -258,19 +270,7 @@ export async function handleMcpPost(req: Request, res: Response): Promise<void> 
     return
   }
 
-  // Batch requests
-  if (Array.isArray(body)) {
-    serverStats.incBatch()
-    const responses = await Promise.all(
-      body.map(item => handleSingle(item, ctx))
-    )
-    // Filter out null (notifications with no id don't get responses)
-    const toSend = responses.filter(Boolean)
-    res.json(toSend.length === 1 ? toSend[0] : toSend)
-    return
-  }
-
-  const response = await handleSingle(body, ctx)
+  const response = await processMcpPayload(body, ctx)
   if (response !== null) {
     // Echo session ID after a successful initialize so clients can track it
     if (ctx._initializeSessionId) {
@@ -281,6 +281,25 @@ export async function handleMcpPost(req: Request, res: Response): Promise<void> 
     // 202 Accepted for notifications (no body) — per MCP streamable HTTP spec
     res.status(202).end()
   }
+}
+
+export async function processMcpPayload(
+  body: unknown,
+  ctx: McpRequestContext,
+): Promise<JsonRpcResponse | JsonRpcResponse[] | null> {
+  // Batch requests
+  if (Array.isArray(body)) {
+    serverStats.incBatch()
+    const responses = await Promise.all(
+      body.map(item => handleSingle(item, ctx))
+    )
+    // Filter out null (notifications with no id don't get responses)
+    const toSend = responses.filter(isJsonRpcResponse)
+    if (toSend.length === 0) return null
+    return toSend.length === 1 ? toSend[0] : toSend
+  }
+
+  return handleSingle(body, ctx)
 }
 
 async function handleSingle(raw: unknown, ctx: McpRequestContext): Promise<JsonRpcResponse | null> {
@@ -309,6 +328,12 @@ async function handleSingle(raw: unknown, ctx: McpRequestContext): Promise<JsonR
 const sseClients = new Set<Response>()
 
 export function handleMcpSse(req: Request, res: Response): void {
+  const tier = resolveRequestPermission(req)
+  if (!DEV_MODE && !tier) {
+    res.status(401).json(makeError(null, RPC_ERRORS.PERMISSION_DENIED.code, 'Unauthorized: missing or invalid X-Kasumi-Key'))
+    return
+  }
+
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
@@ -324,12 +349,12 @@ export function handleMcpSse(req: Request, res: Response): void {
   const host  = req.get('host') ?? 'localhost'
   const messageEndpoint = `${proto}://${host}/mcp?sessionId=${sessionId}`
   res.write(`event: endpoint\ndata: ${messageEndpoint}\n\n`)
-  initializedSessions.add(sessionId)  // pre-authorize SSE sessions
 
   sseClients.add(res)
 
   req.on('close', () => {
     sseClients.delete(res)
+    initializedSessions.delete(sessionId)
   })
 }
 

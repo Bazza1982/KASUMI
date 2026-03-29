@@ -2,6 +2,7 @@
 import { Command } from 'commander'
 import https from 'https'
 import http from 'http'
+import { startMcpStdioTransport } from './mcp/transport/stdio'
 
 const program = new Command()
 
@@ -75,6 +76,24 @@ program
   .option('--host <host>', 'API server host', 'localhost')
   .option('--port <port>', 'API server port', '3001')
   .option('--json', 'Force JSON output')
+
+program
+  .command('mcp-stdio')
+  .description('Run the MCP server over stdio for local agents and CLI tools')
+  .option('--agent <agentId>', 'Agent identifier to attach to MCP audit records')
+  .option('--key <apiKey>', 'Explicit MCP API key (falls back to KASUMI_MCP_KEY)')
+  .action(async (options) => {
+    try {
+      await startMcpStdioTransport({
+        agentId: options.agent,
+        apiKey: options.key,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(message)
+      process.exit(1)
+    }
+  })
 
 // ── health ────────────────────────────────────────────────────────────────────
 program

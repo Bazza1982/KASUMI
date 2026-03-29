@@ -1,7 +1,9 @@
 import React, { useRef, useEffect, useCallback, useState, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
+  getArrowNavigationTarget,
   getEnterNavigationTarget,
+  getFormulaReferenceSelectionTarget,
   getSelectionBounds,
   getTabNavigationTarget,
   getVisibleColIndexFromFieldIndex,
@@ -15,7 +17,7 @@ import { renderCellValue, getSelectOptionStyle } from './renderers'
 import type { FieldMeta, GridCoord, SelectOption } from '../types'
 import { NexcelLogger } from '../services/logger'
 import CellHistoryPanel from '../components/CellHistoryPanel'
-import { isFormulaInputMode } from '../utils/cellReferences'
+import { getFormulaFunctionHintAtCursor, isFormulaInputMode } from '../utils/cellReferences'
 
 interface VirtualGridProps {
   autoFocus?: boolean
@@ -214,23 +216,48 @@ function MultiSelectDropdown({
 
 function CellContent({
   rowIndex,
+  colIndex,
   field,
   isSelectEditing: _isSelectEditing,
   numberFormat,
   fontSize = 13,
 }: {
   rowIndex: number
+  colIndex: number
   field: FieldMeta | null
   isSelectEditing: boolean
   numberFormat?: import('../stores/useCellFormatStore').NumberFormatType
   fontSize?: number
 }) {
-  const { sheet, isEditing, activeCell, editValue, setEditValue, commitCellByField: _commitCellByField } = useExcelStore()
-  const isActive = activeCell?.rowIndex === rowIndex && activeCell?.colIndex !== undefined
+  const {
+    sheet,
+    isEditing,
+    activeCell,
+    editValue,
+    setEditValue,
+    setFormulaEditor,
+    setFormulaSelection,
+    formulaEditor,
+    commitCellByField: _commitCellByField,
+  } = useExcelStore()
+  const inputRef = useRef<HTMLInputElement>(null)
+  const isActiveCell = activeCell?.rowIndex === rowIndex && activeCell?.colIndex === colIndex
+  const syncFormulaCursor = useCallback(() => {
+    const input = inputRef.current
+    if (!input) return
+    setFormulaEditor('grid')
+    setFormulaSelection(input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length)
+  }, [setFormulaEditor, setFormulaSelection])
 
-  // We need the colIndex match — passed in via field comparison with activeCell
-  // activeCell.colIndex is the visible col index; we check by field identity
-  const isActiveCell = isActive && field !== null && activeCell?.colIndex !== undefined
+  useEffect(() => {
+    const input = inputRef.current
+    if (!input || formulaEditor !== 'grid' || !isFormulaInputMode(editValue)) return
+    if (document.activeElement !== input) return
+    const nextStart = useExcelStore.getState().formulaSelectionStart
+    const nextEnd = useExcelStore.getState().formulaSelectionEnd
+    if (input.selectionStart === nextStart && input.selectionEnd === nextEnd) return
+    input.setSelectionRange(nextStart, nextEnd)
+  }, [editValue, formulaEditor])
 
   // For "isActive" in editing context, rely on the parent passing correct field
   if (isActiveCell && isEditing) {
@@ -318,23 +345,37 @@ function CellContent({
       )
     }
     return (
-      <input
-        autoFocus
-        style={{
-          width: '100%',
-          height: '100%',
-          border: 'none',
-          outline: 'none',
-          padding: '0 4px',
-          fontFamily: 'inherit',
-          fontSize: `${fontSize}px`,
-          backgroundColor: 'transparent',
-        }}
-        value={editValue}
-        onChange={e => setEditValue(e.target.value)}
-        onPointerDown={e => e.stopPropagation()}
-        onDoubleClick={e => e.stopPropagation()}
-      />
+      <>
+        <input
+          ref={inputRef}
+          data-testid="grid-inline-editor"
+          autoFocus
+          style={{
+            width: '100%',
+            height: '100%',
+            border: 'none',
+            outline: 'none',
+            padding: '0 4px',
+            fontFamily: 'inherit',
+            fontSize: `${fontSize}px`,
+            backgroundColor: 'transparent',
+          }}
+          value={editValue}
+          onChange={e => {
+            setEditValue(e.target.value)
+            setFormulaSelection(e.target.selectionStart ?? e.target.value.length, e.target.selectionEnd ?? e.target.value.length)
+          }}
+          onFocus={syncFormulaCursor}
+          onClick={syncFormulaCursor}
+          onKeyUp={syncFormulaCursor}
+          onSelect={syncFormulaCursor}
+          onPointerDown={e => {
+            e.stopPropagation()
+            syncFormulaCursor()
+          }}
+          onDoubleClick={e => e.stopPropagation()}
+        />
+      </>
     )
   }
 
@@ -517,6 +558,8 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
     anchorCell,
     isEditing,
     editValue,
+    formulaEditor,
+    formulaSelectionEnd,
     searchText,
     sortConfig,
     frozenColCount,
@@ -832,6 +875,27 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
       if (!isGridFocused()) return
 
       if (isEditing) {
+        const formulaEditing = isFormulaInputMode(editValue)
+        if (
+          formulaEditing
+          && activeCell
+          && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+        ) {
+          e.preventDefault()
+          const next = getFormulaReferenceSelectionTarget(
+            activeCell,
+            selection,
+            anchorCell,
+            e.key,
+            e.shiftKey,
+            rowCount,
+            colCount,
+          )
+          setSelectionState(next.selection, next.activeCell, next.anchorCell)
+          scrollTo(next.activeCell.rowIndex, next.activeCell.colIndex)
+          return
+        }
+
         if (e.key === 'Enter') {
           e.preventDefault()
           exitEdit(true)
@@ -863,10 +927,13 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
       const isShift = e.shiftKey
 
       switch (e.key) {
-        case 'ArrowUp':    rowIndex = Math.max(0, rowIndex - 1); e.preventDefault(); break
-        case 'ArrowDown':  rowIndex = Math.min(rowCount - 1, rowIndex + 1); e.preventDefault(); break
-        case 'ArrowLeft':  colIndex = Math.max(0, colIndex - 1); e.preventDefault(); break
-        case 'ArrowRight': colIndex = Math.min(colCount - 1, colIndex + 1); e.preventDefault(); break
+        case 'ArrowUp':
+        case 'ArrowDown':
+        case 'ArrowLeft':
+        case 'ArrowRight':
+          ;({ rowIndex, colIndex } = getArrowNavigationTarget(activeCell, e.key, rowCount, colCount))
+          e.preventDefault()
+          break
         case 'Tab':
           e.preventDefault()
           if (!e.shiftKey && !selection && colIndex === colCount - 1 && rowIndex === rowCount - 1) {
@@ -988,7 +1055,7 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
       window.removeEventListener('paste', handlePaste)
     }
   }, [activeCell, anchorCell, selection, isEditing, editValue, rowCount, colCount,
-    setActiveCell, setSelection, setAnchor, enterEdit, exitEdit, clearCells, pasteGrid, scrollTo, copySelection, undo, redo, getEnterDestination, getTabDestination, selectAllCells])
+    setActiveCell, setSelection, setSelectionState, setAnchor, enterEdit, exitEdit, clearCells, pasteGrid, scrollTo, copySelection, undo, redo, getEnterDestination, getTabDestination, selectAllCells])
 
   // ── Mouse ─────────────────────────────────────────────────────────────────
 
@@ -1044,6 +1111,15 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
   }
 
   const isActiveCell = (r: number, c: number) => activeCell?.rowIndex === r && activeCell?.colIndex === c
+  const formulaArgumentLabel = isEditing && isFormulaInputMode(editValue)
+    ? (() => {
+        const hint = getFormulaFunctionHintAtCursor(editValue, formulaSelectionEnd)
+        return hint ? `Arg ${hint.argumentIndex}` : ''
+      })()
+    : ''
+  const formulaFunctionHint = isEditing && isFormulaInputMode(editValue)
+    ? getFormulaFunctionHintAtCursor(editValue, formulaSelectionEnd)
+    : null
 
   const closeDropdown = useCallback(() => {
     setDropdownTarget(null)
@@ -1066,6 +1142,35 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
     return {
       top: vRow.start + vRow.size - 4,
       left: vCol.start + ROW_HEADER_WIDTH + colW - 4,
+    }
+  }
+
+  const getInlineFormulaHintOverlay = () => {
+    if (!isEditing || formulaEditor !== 'grid' || !activeCell || (!formulaArgumentLabel && !formulaFunctionHint)) return null
+
+    const vRow = rowVirtualizer.getVirtualItems().find(vr => filteredIndices[vr.index] === activeCell.rowIndex)
+    const vCol = columnVirtualizer.getVirtualItems().find(vc => vc.index === activeCell.colIndex)
+    const scrollEl = parentRef.current
+
+    if (!vRow || !vCol || !scrollEl) return null
+
+    const colW = colWidths[activeCell.colIndex] ?? defaultColW
+    const cellLeft = vCol.start + ROW_HEADER_WIDTH
+    const viewportLeft = scrollEl.scrollLeft + ROW_HEADER_WIDTH + 8
+    const viewportRight = scrollEl.scrollLeft + scrollEl.clientWidth - 12
+    const availableWidth = Math.max(220, viewportRight - viewportLeft)
+    const overlayWidth = Math.min(560, Math.max(260, colW + 240), availableWidth)
+    const desiredLeft = cellLeft + Math.max(8, Math.min(20, colW * 0.15))
+    const maxLeft = Math.max(viewportLeft, viewportRight - overlayWidth)
+    const preferredTop = vRow.start + vRow.size + 8
+    const fallbackTop = Math.max(4, vRow.start - 34)
+    const viewportBottom = scrollEl.scrollTop + scrollEl.clientHeight
+    const overlayTop = preferredTop + 30 <= viewportBottom ? preferredTop : fallbackTop
+
+    return {
+      top: overlayTop,
+      left: Math.min(Math.max(desiredLeft, viewportLeft), maxLeft),
+      width: overlayWidth,
     }
   }
 
@@ -1107,7 +1212,11 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
       setFillDrag(null)
       if (dstEndRow > srcEndRow || dstEndCol > srcEndCol) {
         await fillRange(srcStartRow, srcStartCol, srcEndRow, srcEndCol, srcStartRow, srcStartCol, dstEndRow, dstEndCol)
-        setSelection(srcStartRow, srcStartCol, dstEndRow, dstEndCol)
+        setSelectionState(
+          { startRow: srcStartRow, startCol: srcStartCol, endRow: dstEndRow, endCol: dstEndCol },
+          { rowIndex: dstEndRow, colIndex: dstEndCol },
+          { rowIndex: srcStartRow, colIndex: srcStartCol },
+        )
       }
     }
 
@@ -1117,7 +1226,7 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
     }
-  }, [fillDrag, filteredIndices, rowVirtualizer, columnVirtualizer, colWidths, fillRange, setSelection])
+  }, [fillDrag, filteredIndices, rowVirtualizer, columnVirtualizer, colWidths, fillRange, setSelectionState])
 
   if (!sheet || sheet.isLoading) {
     return (
@@ -1509,6 +1618,7 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
               return (
                 <div
                   key={`c-${vr.index}-${vc.index}`}
+                  data-testid={`grid-cell-${actualRowIndex}-${vc.index}`}
                   style={{
                     position: (isFrozen || isFrozenRow) ? 'sticky' : 'absolute',
                     top: vr.start,
@@ -1546,6 +1656,7 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
                 >
                   <CellContent
                     rowIndex={actualRowIndex}
+                    colIndex={vc.index}
                     field={field}
                     isSelectEditing={isSelectEditing}
                     numberFormat={fmt?.numberFormat}
@@ -1573,10 +1684,83 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
 
           {/* Fill handle */}
           {(() => {
+            const overlay = getInlineFormulaHintOverlay()
+            if (!overlay) return null
+
+            return (
+              <div
+                data-testid="grid-inline-formula-hint-overlay"
+                style={{
+                  position: 'absolute',
+                  top: overlay.top,
+                  left: overlay.left,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  width: overlay.width,
+                  maxWidth: overlay.width,
+                  pointerEvents: 'none',
+                  zIndex: 12,
+                }}
+              >
+                {formulaFunctionHint ? (
+                  <div
+                    data-testid="grid-formula-function-hint"
+                    style={{
+                      color: '#4b5563',
+                      backgroundColor: 'rgba(255,255,255,0.98)',
+                      border: '1px solid #d0d7de',
+                      borderRadius: 999,
+                      padding: '4px 10px',
+                      fontSize: '11px',
+                      lineHeight: 1.45,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      flex: 1,
+                      boxShadow: '0 4px 12px rgba(15, 23, 42, 0.08)',
+                    }}
+                  >
+                    {formulaFunctionHint.functionName}
+                    {'('}
+                    {formulaFunctionHint.arguments.map((argument, index) => (
+                      <span key={`${formulaFunctionHint.functionName}-${argument}-${index}`} style={index + 1 === formulaFunctionHint.argumentIndex ? { color: '#217346', fontWeight: 700 } : undefined}>
+                        {index > 0 ? ', ' : ''}
+                        {argument}
+                      </span>
+                    ))}
+                    {')'}
+                  </div>
+                ) : null}
+                {formulaArgumentLabel ? (
+                  <div
+                    data-testid="grid-formula-argument-badge"
+                    style={{
+                      color: '#217346',
+                      backgroundColor: '#eaf4ec',
+                      border: '1px solid rgba(33,115,70,0.16)',
+                      borderRadius: 999,
+                      padding: '4px 8px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      lineHeight: 1.2,
+                      boxShadow: '0 4px 12px rgba(15, 23, 42, 0.06)',
+                    }}
+                  >
+                    {formulaArgumentLabel}
+                  </div>
+                ) : null}
+              </div>
+            )
+          })()}
+
+          {/* Fill handle */}
+          {(() => {
             const pos = getFillHandlePos()
             if (!pos) return null
             return (
               <div
+                data-testid="grid-fill-handle"
                 style={{
                   position: 'absolute',
                   top: pos.top,

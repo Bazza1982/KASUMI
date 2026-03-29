@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import {
+  getArrowNavigationTarget,
   getEnterNavigationTarget,
   getFieldByVisibleCol,
+  getFormulaReferenceSelectionTarget,
   getSelectionBounds,
   getTabNavigationTarget,
   useExcelStore,
@@ -23,6 +25,9 @@ const resetState = () => {
     anchorCell: { rowIndex: 0, colIndex: 0 },
     isEditing: false,
     editValue: '',
+    formulaSelectionStart: 0,
+    formulaSelectionEnd: 0,
+    formulaEditor: null,
     statusText: 'Ready',
     searchText: '',
     sortConfig: null,
@@ -131,12 +136,28 @@ describe('useExcelStore', () => {
     expect(useExcelStore.getState().isEditing).toBe(true)
   })
 
+  it('enterEdit seeds the formula session cursor at the end of the edit value', () => {
+    useExcelStore.getState().enterEdit('=SUM(A1)')
+    expect(useExcelStore.getState().formulaSelectionStart).toBe(8)
+    expect(useExcelStore.getState().formulaSelectionEnd).toBe(8)
+    expect(useExcelStore.getState().formulaEditor).toBeNull()
+  })
+
   // ── 6. exitEdit ───────────────────────────────────────────────────────────
 
   it('exitEdit(false) sets isEditing to false without committing', () => {
-    useExcelStore.setState({ isEditing: true, editValue: 'pending' })
+    useExcelStore.setState({
+      isEditing: true,
+      editValue: 'pending',
+      formulaSelectionStart: 3,
+      formulaSelectionEnd: 5,
+      formulaEditor: 'grid',
+    })
     useExcelStore.getState().exitEdit(false)
     expect(useExcelStore.getState().isEditing).toBe(false)
+    expect(useExcelStore.getState().formulaSelectionStart).toBe(0)
+    expect(useExcelStore.getState().formulaSelectionEnd).toBe(0)
+    expect(useExcelStore.getState().formulaEditor).toBeNull()
   })
 
   // ── 7. setEditValue ───────────────────────────────────────────────────────
@@ -144,6 +165,14 @@ describe('useExcelStore', () => {
   it('setEditValue updates editValue', () => {
     useExcelStore.getState().setEditValue('hello')
     expect(useExcelStore.getState().editValue).toBe('hello')
+  })
+
+  it('setFormulaSelection and setFormulaEditor update the shared formula session state', () => {
+    useExcelStore.getState().setFormulaSelection(2, 4)
+    useExcelStore.getState().setFormulaEditor('formula-bar')
+    expect(useExcelStore.getState().formulaSelectionStart).toBe(2)
+    expect(useExcelStore.getState().formulaSelectionEnd).toBe(4)
+    expect(useExcelStore.getState().formulaEditor).toBe('formula-bar')
   })
 
   // ── 8. toggleSort ─────────────────────────────────────────────────────────
@@ -264,6 +293,22 @@ describe('useExcelStore', () => {
     })
   })
 
+  it('arrow navigation clamps to the grid edges', () => {
+    expect(getArrowNavigationTarget(
+      { rowIndex: 0, colIndex: 0 },
+      'ArrowLeft',
+      10,
+      10,
+    )).toEqual({ rowIndex: 0, colIndex: 0 })
+
+    expect(getArrowNavigationTarget(
+      { rowIndex: 9, colIndex: 9 },
+      'ArrowDown',
+      10,
+      10,
+    )).toEqual({ rowIndex: 9, colIndex: 9 })
+  })
+
   it('tab navigation loops inside a rectangular selection', () => {
     const next = getTabNavigationTarget(
       { rowIndex: 1, colIndex: 2 },
@@ -283,5 +328,53 @@ describe('useExcelStore', () => {
       10,
     )
     expect(next).toEqual({ rowIndex: 0, colIndex: 0 })
+  })
+
+  it('formula reference arrow movement can extend from the anchor cell', () => {
+    expect(getFormulaReferenceSelectionTarget(
+      { rowIndex: 1, colIndex: 1 },
+      { startRow: 1, startCol: 1, endRow: 1, endCol: 1 },
+      { rowIndex: 1, colIndex: 1 },
+      'ArrowRight',
+      true,
+      10,
+      10,
+    )).toEqual({
+      selection: { startRow: 1, startCol: 1, endRow: 1, endCol: 2 },
+      activeCell: { rowIndex: 1, colIndex: 2 },
+      anchorCell: { rowIndex: 1, colIndex: 1 },
+    })
+  })
+
+  it('formula reference arrow movement resets to a single target without shift', () => {
+    expect(getFormulaReferenceSelectionTarget(
+      { rowIndex: 1, colIndex: 1 },
+      { startRow: 1, startCol: 1, endRow: 2, endCol: 2 },
+      { rowIndex: 1, colIndex: 1 },
+      'ArrowDown',
+      false,
+      10,
+      10,
+    )).toEqual({
+      selection: { startRow: 3, startCol: 2, endRow: 3, endCol: 2 },
+      activeCell: { rowIndex: 3, colIndex: 2 },
+      anchorCell: { rowIndex: 3, colIndex: 2 },
+    })
+  })
+
+  it('pasteGrid expands the selection to the pasted range and keeps the top-left cell active', async () => {
+    seedSheetFixture()
+
+    await useExcelStore.getState().pasteGrid(0, 0, [
+      ['One', 'Two'],
+      ['Three', 'Four'],
+    ])
+
+    const store = useExcelStore.getState()
+    expect(store.activeCell).toEqual({ rowIndex: 0, colIndex: 0 })
+    expect(store.anchorCell).toEqual({ rowIndex: 0, colIndex: 0 })
+    expect(store.selection).toEqual({ startRow: 0, startCol: 0, endRow: 1, endCol: 1 })
+    expect(store.getCellDisplay(1, 0)).toBe('Three')
+    expect(store.getCellRaw(1, 1)).toBe('Four')
   })
 })

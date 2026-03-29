@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { GridCoord, SelectionRange, SheetContext, FieldMeta, RowRecord, TableMeta, FilterRule } from '../types'
+import { MockAdapter } from '../adapters/baserow/MockAdapter'
 import { NexcelApiAdapter } from '../adapters/baserow/NexcelApiAdapter'
 import { BaserowAdapter } from '../adapters/baserow/BaserowAdapter'
 import { renderCellValue } from '../grid/renderers'
@@ -8,15 +9,18 @@ import { NexcelLogger } from '../services/logger'
 import { useCellChangeStore } from './useCellChangeStore'
 
 // Adapter selection — reads from localStorage so ConnectionPanel can switch at runtime.
-// Default: NexcelApiAdapter (api-server is the single source of truth).
-// Set kasumi_use_baserow=true to connect to an external Baserow instance instead.
+// Default: MockAdapter for offline demo mode.
+// Set kasumi_use_mock=false to use the api-server, and kasumi_use_baserow=true to force an external Baserow instance instead.
+const _useMock = typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_use_mock') !== 'false' : true
 const _useBaserow = typeof localStorage !== 'undefined' && localStorage.getItem('kasumi_use_baserow') === 'true'
-const adapter = _useBaserow
-  ? new BaserowAdapter({
+const adapter = _useMock
+  ? new MockAdapter()
+  : _useBaserow
+    ? new BaserowAdapter({
       baseUrl: (typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_baserow_url') : null) || 'http://localhost:8000',
       token: (typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_baserow_token') : null) || '',
     })
-  : new NexcelApiAdapter()
+    : new NexcelApiAdapter()
 
 const configuredDbId = typeof localStorage !== 'undefined'
   ? parseInt(localStorage.getItem('kasumi_baserow_db_id') || '1', 10)
@@ -62,6 +66,53 @@ export const getSelectionBounds = (selection: SelectionRange | null) => {
     maxRow: Math.max(selection.startRow, selection.endRow),
     minCol: Math.min(selection.startCol, selection.endCol),
     maxCol: Math.max(selection.startCol, selection.endCol),
+  }
+}
+
+export const getArrowNavigationTarget = (
+  from: GridCoord,
+  key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight',
+  rowCount: number,
+  colCount: number,
+): GridCoord => {
+  switch (key) {
+    case 'ArrowUp':
+      return { rowIndex: Math.max(0, from.rowIndex - 1), colIndex: from.colIndex }
+    case 'ArrowDown':
+      return { rowIndex: Math.min(rowCount - 1, from.rowIndex + 1), colIndex: from.colIndex }
+    case 'ArrowLeft':
+      return { rowIndex: from.rowIndex, colIndex: Math.max(0, from.colIndex - 1) }
+    case 'ArrowRight':
+      return { rowIndex: from.rowIndex, colIndex: Math.min(colCount - 1, from.colIndex + 1) }
+  }
+}
+
+export const getFormulaReferenceSelectionTarget = (
+  activeCell: GridCoord,
+  selection: SelectionRange | null,
+  anchorCell: GridCoord | null,
+  key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight',
+  extendSelection: boolean,
+  rowCount: number,
+  colCount: number,
+): { selection: SelectionRange; activeCell: GridCoord; anchorCell: GridCoord } => {
+  const current = selection
+    ? { rowIndex: selection.endRow, colIndex: selection.endCol }
+    : activeCell
+  const next = getArrowNavigationTarget(current, key, rowCount, colCount)
+  const anchor = extendSelection
+    ? (anchorCell ?? activeCell)
+    : next
+
+  return {
+    selection: {
+      startRow: anchor.rowIndex,
+      startCol: anchor.colIndex,
+      endRow: next.rowIndex,
+      endCol: next.colIndex,
+    },
+    activeCell: next,
+    anchorCell: anchor,
   }
 }
 
@@ -135,6 +186,9 @@ interface ExcelState {
   // ── Edit mode ─────────────────────────────────────
   isEditing: boolean
   editValue: string
+  formulaSelectionStart: number
+  formulaSelectionEnd: number
+  formulaEditor: 'formula-bar' | 'grid' | null
 
   // ── Status ────────────────────────────────────────
   statusText: string
@@ -164,6 +218,8 @@ interface ExcelState {
   enterEdit: (value?: string) => void
   exitEdit: (commit: boolean) => void
   setEditValue: (v: string) => void
+  setFormulaSelection: (start: number, end?: number) => void
+  setFormulaEditor: (editor: 'formula-bar' | 'grid' | null) => void
 
   commitCell: (rowIndex: number, colIndex: number, rawValue: unknown) => Promise<void>
   clearCells: (coords: GridCoord[]) => Promise<void>
@@ -342,6 +398,9 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     anchorCell: { rowIndex: 0, colIndex: 0 },
     isEditing: false,
     editValue: '',
+    formulaSelectionStart: 0,
+    formulaSelectionEnd: 0,
+    formulaEditor: null,
     statusText: 'Ready',
     searchText: '',
     sortConfig: null,
@@ -414,6 +473,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
       anchorCell: { rowIndex, colIndex },
       selection: { startRow: rowIndex, startCol: colIndex, endRow: rowIndex, endCol: colIndex },
       isEditing: false,
+      formulaEditor: null,
     }),
 
     setSelection: (startRow, startCol, endRow, endCol) => set({
@@ -435,18 +495,31 @@ export const useExcelStore = create<ExcelState>((set, get) => {
       const { activeCell, getCellDisplay } = get()
       if (!activeCell) return
       const current = value !== undefined ? value : getCellDisplay(activeCell.rowIndex, activeCell.colIndex)
-      set({ isEditing: true, editValue: current })
+      set({
+        isEditing: true,
+        editValue: current,
+        formulaSelectionStart: current.length,
+        formulaSelectionEnd: current.length,
+        formulaEditor: null,
+      })
     },
 
     exitEdit: (commit) => {
       const { activeCell, editValue } = get()
-      set({ isEditing: false })
+      set({
+        isEditing: false,
+        formulaSelectionStart: 0,
+        formulaSelectionEnd: 0,
+        formulaEditor: null,
+      })
       if (commit && activeCell) {
         get().commitCell(activeCell.rowIndex, activeCell.colIndex, editValue)
       }
     },
 
     setEditValue: (v) => set({ editValue: v }),
+    setFormulaSelection: (start, end = start) => set({ formulaSelectionStart: start, formulaSelectionEnd: end }),
+    setFormulaEditor: (editor) => set({ formulaEditor: editor }),
 
     // ── Data mutations ────────────────────────────────
 
@@ -495,7 +568,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
 
       for (const { rowIndex, colIndex } of coords) {
         const field = getFieldByVisibleCol(sheet, hiddenFieldIds, colIndex)
-        const row = sheet.rows[rowIndex]
+        const row = newRows[rowIndex]
         if (!field || !row || field.readOnly) continue
         newRows[rowIndex] = { ...row, fields: { ...row.fields, [field.id]: '' } }
         // Sync to allRows so applyFiltersAndSort() doesn't revert the clear
@@ -527,7 +600,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
           const rIdx = startRow + rOff
           const cIdx = startCol + cOff
           const field = getFieldByVisibleCol(sheet, hiddenFieldIds, cIdx)
-          const row = sheet.rows[rIdx]
+          const row = newRows[rIdx]
           if (!field || !row || field.readOnly) continue
           const val = data[rOff][cOff].trim()
           const oldValue = row.fields[field.id]
@@ -548,7 +621,18 @@ export const useExcelStore = create<ExcelState>((set, get) => {
         }
       }
 
-      set({ sheet: { ...sheet, rows: newRows }, allRows: newAllRows })
+      const pastedRowCount = Math.max(1, data.length)
+      const pastedColCount = Math.max(1, ...data.map(row => row.length))
+      const endRow = Math.min(sheet.rows.length - 1, startRow + pastedRowCount - 1)
+      const endCol = Math.min(getVisibleFields(sheet, hiddenFieldIds).length - 1, startCol + pastedColCount - 1)
+
+      set({
+        sheet: { ...sheet, rows: newRows },
+        allRows: newAllRows,
+        activeCell: { rowIndex: startRow, colIndex: startCol },
+        anchorCell: { rowIndex: startRow, colIndex: startCol },
+        selection: { startRow, startCol, endRow, endCol },
+      })
       if (updates.length > 0) {
         await adapter.batchUpdate(sheet.tableId, updates)
       }

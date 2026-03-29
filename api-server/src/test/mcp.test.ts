@@ -7,7 +7,7 @@
  * Auth tier enforcement and Origin guard are also verified.
  */
 
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest'
 import supertest from 'supertest'
 import express from 'express'
 import { startMcpServer } from '../mcp/server'
@@ -30,6 +30,13 @@ beforeAll(() => {
   app = buildApp()
 })
 
+afterEach(() => {
+  delete process.env['KASUMI_READ_KEY']
+  delete process.env['KASUMI_WRITE_KEY']
+  delete process.env['KASUMI_ADMIN_KEY']
+  vi.resetModules()
+})
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function rpc(method: string, params?: unknown, id: number | string = 1) {
@@ -42,6 +49,33 @@ async function post(body: Record<string, unknown> | Array<Record<string, unknown
     .set('Content-Type', 'application/json')
     .set(headers)
     .send(body as object)
+}
+
+async function openSse(headers: Record<string, string> = {}) {
+  return supertest(app)
+    .get('/mcp/sse')
+    .set(headers)
+    .buffer(true)
+    .parse((res, callback) => {
+      let data = ''
+      res.setEncoding('utf8')
+      res.on('data', chunk => {
+        data += chunk
+        if (data.includes('\n\n')) {
+          callback(null, { text: data })
+          ;((res as unknown) as NodeJS.ReadableStream & { destroy?: () => void }).destroy?.()
+        }
+      })
+      res.on('end', () => callback(null, { text: data }))
+    })
+}
+
+function extractSessionId(ssePayload: string): string {
+  const match = ssePayload.match(/sessionId=([^\s&]+)/)
+  if (!match) {
+    throw new Error(`No sessionId found in SSE payload: ${ssePayload}`)
+  }
+  return match[1]
 }
 
 // Perform a full initialize → tools/call sequence and return the session ID
@@ -179,6 +213,20 @@ describe('tools/call', () => {
     expect(parsed.rowCount).toBeGreaterThan(0)
     expect(Array.isArray(parsed.columnStats)).toBe(true)
   })
+
+  it('blocks tools/call on SSE sessions before initialize', async () => {
+    const sseRes = await openSse()
+    expect(sseRes.status).toBe(200)
+
+    const sessionId = extractSessionId((sseRes.body as { text: string }).text)
+    const res = await post(
+      rpc('tools/call', { name: 'system_ping', arguments: {} }),
+      { 'mcp-session-id': sessionId },
+    )
+
+    expect(res.body.error).toBeDefined()
+    expect(res.body.error.code).toBe(-32600)
+  })
 })
 
 // ─── auth tiers ───────────────────────────────────────────────────────────────
@@ -283,6 +331,25 @@ describe('Origin guard', () => {
       .send(rpc('ping'))
     // In DEV_MODE this is allowed (200); in production it would be 403
     expect([200, 403]).toContain(res.status)
+  })
+})
+
+describe('SSE auth', () => {
+  it('rejects anonymous SSE connections when auth is configured', async () => {
+    process.env['KASUMI_READ_KEY'] = 'read-test-key'
+    vi.resetModules()
+
+    const { default: importedExpress } = await import('express')
+    const { mcpOriginGuard: importedOriginGuard } = await import('../mcp/originCheck')
+    const { handleMcpSse: importedHandleMcpSse } = await import('../mcp/router')
+
+    const lockedApp = importedExpress()
+    lockedApp.get('/mcp/sse', importedOriginGuard, importedHandleMcpSse)
+
+    const res = await supertest(lockedApp).get('/mcp/sse')
+
+    expect(res.status).toBe(401)
+    expect(res.body.error.code).toBe(-32001)
   })
 })
 
