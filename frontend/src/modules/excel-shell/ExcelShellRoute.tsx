@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import NexcelMenuBar from './components/NexcelMenuBar'
 import Ribbon from './components/Ribbon'
 import CommentPanel from './components/CommentPanel'
 import ConditionalFormatDialog from './components/ConditionalFormatDialog'
@@ -16,37 +17,57 @@ import { useCellChangeStore } from './stores/useCellChangeStore'
 import { useConditionalFormatStore } from './stores/useConditionalFormatStore'
 import { nexcelAIContext } from './services/AIContextSerializer'
 import { useMcpEvents } from '../../platform/mcp/useMcpEvents'
+import { MinatoNexcelAdapter } from './adapters/minato/MinatoNexcelAdapter'
+
+export interface EmbedConfig {
+  artefactId: string
+  minatoApi: string
+}
 
 interface ExcelShellRouteProps {
   autoFocusTarget?: 'grid' | 'formula-bar'
   onSurfaceActivity?: (target: 'grid' | 'formula-bar') => void
+  embedConfig?: EmbedConfig
 }
 
-const ExcelShellRoute = ({ autoFocusTarget = 'grid', onSurfaceActivity }: ExcelShellRouteProps) => {
+const ExcelShellRoute = ({ autoFocusTarget = 'grid', onSurfaceActivity, embedConfig }: ExcelShellRouteProps) => {
   const [showHelp, setShowHelp] = useState(false)
   const [showCommentPanel, setShowCommentPanel] = useState(false)
   const [showConditionalFormat, setShowConditionalFormat] = useState(false)
   const [gridFocusSignal, setGridFocusSignal] = useState(0)
+  const isEmbeddedNexcel = new URLSearchParams(window.location.search).get('mode') === 'embed'
+    && new URLSearchParams(window.location.search).get('type') === 'nexcel'
 
-  const { load: loadComments } = useCommentStore()
-  const { load: loadFormats, setFormatRange } = useCellFormatStore()
-  const { load: loadChanges } = useCellChangeStore()
-  const { load: loadConditionalFormats } = useConditionalFormatStore()
+  const { load: loadComments, reset: resetComments } = useCommentStore()
+  const { load: loadFormats, setFormatRange, reset: resetFormats } = useCellFormatStore()
+  const { load: loadChanges, reset: resetChanges } = useCellChangeStore()
+  const { load: loadConditionalFormats, reset: resetConditionalFormats } = useConditionalFormatStore()
   const { sheet, hiddenFieldIds, selection, activeCell, undo, redo, deduplicateRows, loadSheet, loadTables } = useExcelStore()
 
   const handlePrint = () => window.print()
 
   // Load persisted data on mount
   useEffect(() => {
-    loadComments()
-    loadFormats()
-    loadChanges()
-    loadConditionalFormats()
-  }, [])
+    if (isEmbeddedNexcel) {
+      loadComments()
+      loadFormats()
+      loadChanges()
+      loadConditionalFormats()
+      return
+    }
+
+    // Default startup should behave like a brand-new workbook, not a rehydrated prior session.
+    resetComments()
+    resetFormats()
+    resetChanges()
+    resetConditionalFormats()
+  }, [isEmbeddedNexcel, loadComments, loadFormats, loadChanges, loadConditionalFormats, resetComments, resetFormats, resetChanges, resetConditionalFormats])
 
   useEffect(() => {
-    loadTables()
-  }, [loadTables])
+    if (isEmbeddedNexcel) {
+      loadTables()
+    }
+  }, [isEmbeddedNexcel, loadTables])
 
   // ── Real-time MCP event sync ──────────────────────────────────────────────
   // When an AI agent mutates nexcelStore via MCP write tools, the server
@@ -130,31 +151,17 @@ const ExcelShellRoute = ({ autoFocusTarget = 'grid', onSurfaceActivity }: ExcelS
     return () => window.removeEventListener('keydown', handler)
   }, [showHelp])
 
-  const NEXCEL_MENUS = ['File', 'Home', 'Insert', 'Page Layout', 'Formulas', 'Data', 'Review', 'View', 'Help']
-  const [activeMenu, setActiveMenu] = useState('Home')
-
   return (
     <ErrorBoundary>
       <div data-testid="excel-shell" style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#f3f2f1' }}>
-        {/* Classic menu bar */}
-        <div className="nexcel-no-print" style={{
-          display: 'flex', alignItems: 'center',
-          background: '#fff', borderBottom: '1px solid #e1dfdd',
-          padding: '0 8px', height: 28, flexShrink: 0, userSelect: 'none',
-        }}>
-          {NEXCEL_MENUS.map(m => (
-            <button
-              key={m}
-              onClick={() => setActiveMenu(m)}
-              style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                padding: '0 10px', height: '100%', fontSize: 13,
-                color: activeMenu === m ? '#217346' : '#333',
-                fontWeight: activeMenu === m ? 600 : 400,
-                borderBottom: activeMenu === m ? '2px solid #217346' : '2px solid transparent',
-              }}
-            >{m}</button>
-          ))}
+        {/* Classic menu bar — functional dropdowns */}
+        <div className="nexcel-no-print">
+          <NexcelMenuBar
+            onHelp={() => setShowHelp(true)}
+            onToggleComments={() => setShowCommentPanel(p => !p)}
+            onConditionalFormat={() => setShowConditionalFormat(true)}
+            onPrint={handlePrint}
+          />
         </div>
         <Ribbon
           onHelp={() => setShowHelp(true)}
@@ -162,7 +169,7 @@ const ExcelShellRoute = ({ autoFocusTarget = 'grid', onSurfaceActivity }: ExcelS
           showCommentPanel={showCommentPanel}
           onFormatSelection={(fmt) => setFormatRange(getSelectedCellRefs(), fmt)}
           onConditionalFormat={() => setShowConditionalFormat(true)}
-          activeTab={activeMenu}
+          activeTab="Home"
           onPrint={handlePrint}
           onDeduplicate={deduplicateRows}
         />
