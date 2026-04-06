@@ -163,6 +163,27 @@ Implementation should be design-first:
 
 No backend needed. Persist zoom level in local store state.
 
+**Validation update (2026-03-30):**
+
+- Steps 1 and 2 are now effectively validated in code, not just on paper.
+- `useExcelStore.ts` already persists `zoomLevel`; `Ribbon.tsx` already exposes a VIEW-tab zoom control.
+- `VirtualGrid.tsx` already uses token scaling rather than wrapper scaling:
+  - row height derives from `BASE_ROW_HEIGHT * zoomLevel`
+  - column width estimation derives from `BASE_COL_WIDTH * zoomLevel`
+  - cell/header font sizes also derive from `zoomLevel`
+- Pointer math remains in the grid's native coordinate system. This is the critical reason token-scaling is viable:
+  - drag hit testing still uses unscaled `clientX/clientY -> scroll offset -> virtual item bounds`
+  - no `transform: scale(...)` wrapper is applied, so `getBoundingClientRect()` and virtualizer math stay aligned
+- Sticky/frozen behavior is also compatible with this strategy because frozen cells/headers remain positioned from virtual row/column offsets, not from transformed pixels.
+
+**What this means for delivery:**
+
+- Zoom is no longer a pure design placeholder. A first-pass implementation already exists and follows the correct rendering strategy.
+- The remaining work is hardening, not invention:
+  - scale remaining fixed layout tokens (`ROW_HEADER_WIDTH`, `COL_HEADER_HEIGHT`) if visual density feels inconsistent at non-100% zoom
+  - verify resize/fill-handle overlays against zoomed custom column widths
+  - add targeted tests for zoomed selection, frozen panes, and drag interactions
+
 ---
 
 ## Phase 3 — WORDO Class 1 (Quick Wins)

@@ -6,7 +6,7 @@ import { HeaderFooterEditor } from './HeaderFooterEditor'
 import { WatermarkOverlay } from '../components/WatermarkOverlay'
 import { useWordoStore } from '../stores/useWordoStore'
 import type { LayoutOrchestrator } from './LayoutOrchestrator'
-import type { PageStyle, SectionId, WatermarkConfig } from '../types/document'
+import type { HeaderFooter, PageStyle, SectionId, WatermarkConfig } from '../types/document'
 import 'prosemirror-view/style/prosemirror.css'
 import 'prosemirror-tables/style/tables.css'
 import './wordo-editor.css'
@@ -16,6 +16,10 @@ interface SectionEditorProps {
   orchestrator: LayoutOrchestrator
   pageStyle: PageStyle
   watermark?: WatermarkConfig
+  header?: HeaderFooter
+  footer?: HeaderFooter
+  previousHeader?: HeaderFooter
+  previousFooter?: HeaderFooter
   sectionIndex: number     // 0-based — used for page number calculation
   totalSections: number
   readOnly?: boolean
@@ -27,7 +31,7 @@ const MM_TO_PX = 3.7795275591
 const mmToPx = (mm: number) => Math.round(mm * MM_TO_PX)
 
 export const SectionEditor: React.FC<SectionEditorProps> = ({
-  sectionId, orchestrator, pageStyle, watermark,
+  sectionId, orchestrator, pageStyle, watermark, header, footer, previousHeader, previousFooter,
   sectionIndex, totalSections, readOnly = false, autoFocus = false, onSurfaceFocus,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null)
@@ -106,10 +110,12 @@ export const SectionEditor: React.FC<SectionEditorProps> = ({
     <div
       className="wordo-section-wrapper"
       data-section-id={sectionId}
+      data-testid={`wordo-section-${sectionId}`}
       style={{ marginTop: sectionIndex === 0 ? 32 : 0 }}
     >
       <div
         className={`wordo-page${focused ? ' focused' : ''}`}
+        data-testid={`wordo-page-${sectionId}`}
         style={{
           width: pageW,
           minHeight: pageH,
@@ -131,11 +137,18 @@ export const SectionEditor: React.FC<SectionEditorProps> = ({
         {/* ── Header ── */}
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: mt, zIndex: 1 }}>
           <HeaderFooterEditor
+            sectionId={sectionId}
             zone="header"
+            value={header}
+            inheritedValue={previousHeader}
+            hasPreviousSection={sectionIndex > 0}
+            differentFirstPage={pageStyle.differentFirstPage}
+            differentOddEven={pageStyle.differentOddEven}
             pageNumber={pageNum}
             totalPages={totalSections}
             height={headerH}
             paddingH={ml}
+            readOnly={readOnly}
           />
         </div>
 
@@ -143,6 +156,7 @@ export const SectionEditor: React.FC<SectionEditorProps> = ({
         <div
           ref={mountRef}
           className="wordo-editor-surface"
+          data-testid={`wordo-editor-surface-${sectionId}`}
           style={{
             paddingTop: mt,
             paddingBottom: mb,
@@ -163,11 +177,18 @@ export const SectionEditor: React.FC<SectionEditorProps> = ({
         {/* ── Footer ── */}
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: mb, zIndex: 1 }}>
           <HeaderFooterEditor
+            sectionId={sectionId}
             zone="footer"
+            value={footer}
+            inheritedValue={previousFooter}
+            hasPreviousSection={sectionIndex > 0}
+            differentFirstPage={pageStyle.differentFirstPage}
+            differentOddEven={pageStyle.differentOddEven}
             pageNumber={pageNum}
             totalPages={totalSections}
             height={footerH}
             paddingH={ml}
+            readOnly={readOnly}
           />
         </div>
 

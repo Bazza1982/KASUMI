@@ -3,24 +3,43 @@ import type { GridCoord, SelectionRange, SheetContext, FieldMeta, RowRecord, Tab
 import { MockAdapter } from '../adapters/baserow/MockAdapter'
 import { NexcelApiAdapter } from '../adapters/baserow/NexcelApiAdapter'
 import { BaserowAdapter } from '../adapters/baserow/BaserowAdapter'
+import { MinatoNexcelAdapter } from '../adapters/minato/MinatoNexcelAdapter'
 import { renderCellValue } from '../grid/renderers'
 import { objectRegistry, makeObjectId } from '../../../platform/object-registry'
 import { NexcelLogger } from '../services/logger'
 import { useCellChangeStore } from './useCellChangeStore'
+import { useCellFormatStore } from './useCellFormatStore'
+import { useConditionalFormatStore } from './useConditionalFormatStore'
+import { useCommentStore } from './useCommentStore'
 
 // Adapter selection — reads from localStorage so ConnectionPanel can switch at runtime.
 // Default: MockAdapter for offline demo mode.
 // Set kasumi_use_mock=false to use the api-server, and kasumi_use_baserow=true to force an external Baserow instance instead.
-const _useMock = typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_use_mock') !== 'false' : true
-const _useBaserow = typeof localStorage !== 'undefined' && localStorage.getItem('kasumi_use_baserow') === 'true'
-const adapter = _useMock
-  ? new MockAdapter()
-  : _useBaserow
-    ? new BaserowAdapter({
-      baseUrl: (typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_baserow_url') : null) || 'http://localhost:8000',
-      token: (typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_baserow_token') : null) || '',
-    })
-    : new NexcelApiAdapter()
+//
+// Embed mode (Minato iframe): if URL contains ?mode=embed&type=nexcel&artefact_id=xxx&minato_api=xxx,
+// use MinatoNexcelAdapter to read/write directly from the Minato artefact.
+function _selectAdapter() {
+  if (typeof window !== 'undefined') {
+    const p = new URLSearchParams(window.location.search)
+    if (p.get('mode') === 'embed' && p.get('type') === 'nexcel') {
+      const artefactId = p.get('artefact_id')
+      const minatoApi = p.get('minato_api') ?? 'http://localhost:8000'
+      if (artefactId) return new MinatoNexcelAdapter(minatoApi, artefactId)
+    }
+  }
+  const _useMock = typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_use_mock') !== 'false' : true
+  const _useBaserow = typeof localStorage !== 'undefined' && localStorage.getItem('kasumi_use_baserow') === 'true'
+  return _useMock
+    ? new MockAdapter()
+    : _useBaserow
+      ? new BaserowAdapter({
+        baseUrl: (typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_baserow_url') : null) || 'http://localhost:8000',
+        token: (typeof localStorage !== 'undefined' ? localStorage.getItem('kasumi_baserow_token') : null) || '',
+      })
+      : new NexcelApiAdapter()
+}
+
+const adapter = _selectAdapter()
 
 const configuredDbId = typeof localStorage !== 'undefined'
   ? parseInt(localStorage.getItem('kasumi_baserow_db_id') || '1', 10)
@@ -59,6 +78,11 @@ export const getVisibleColIndexFromFieldIndex = (
   return getVisibleFields(sheet, hiddenFieldIds).findIndex(candidate => candidate.id === field.id)
 }
 
+export interface CsvImportOptions {
+  mode?: 'delimiter' | 'whitespace'
+  delimiter?: string
+}
+
 export const getSelectionBounds = (selection: SelectionRange | null) => {
   if (!selection) return null
   return {
@@ -67,6 +91,138 @@ export const getSelectionBounds = (selection: SelectionRange | null) => {
     minCol: Math.min(selection.startCol, selection.endCol),
     maxCol: Math.max(selection.startCol, selection.endCol),
   }
+}
+
+const DEFAULT_ACTIVE_CELL: GridCoord = { rowIndex: 0, colIndex: 0 }
+const DEFAULT_SELECTION: SelectionRange = { startRow: 0, startCol: 0, endRow: 0, endCol: 0 }
+const DEFAULT_TABLE_ID = 1
+const DEFAULT_TABLE_NAME = 'Sheet1'
+const DEFAULT_ROW_COUNT = 100
+const DEFAULT_VIEW_ID = 1
+
+const makeDefaultTableMeta = (): TableMeta => ({
+  id: DEFAULT_TABLE_ID,
+  name: DEFAULT_TABLE_NAME,
+  databaseId: configuredDbId,
+  order: 1,
+})
+
+const makeBlankFields = (): FieldMeta[] => {
+  const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  return LETTERS.split('').map((_, i) => ({
+    id: i + 1,
+    name: '',
+    type: 'text' as const,
+    order: i + 1,
+    primary: i === 0,
+    readOnly: false,
+  }))
+}
+
+const makeBlankRows = (rowCount = DEFAULT_ROW_COUNT): RowRecord[] => (
+  Array.from({ length: rowCount }, (_, i) => ({
+    id: i + 1,
+    order: `${(i + 1).toFixed(5)}`,
+    fields: {} as Record<number, unknown>,
+  }))
+)
+
+const makeBlankSheet = (fields = makeBlankFields(), rows = makeBlankRows()): SheetContext => ({
+  tableId: DEFAULT_TABLE_ID,
+  tableName: DEFAULT_TABLE_NAME,
+  viewId: DEFAULT_VIEW_ID,
+  fields,
+  rows,
+  totalCount: rows.length,
+  isLoading: false,
+  error: null,
+})
+
+const normalizeImportedHeader = (header: string, index: number): string => {
+  const trimmed = header.trim()
+  return trimmed || `Column ${index + 1}`
+}
+
+const isPristineBlankWorkbook = (sheet: SheetContext, allRows: RowRecord[]): boolean => (
+  sheet.fields.every(field => field.name.trim() === '')
+  && allRows.every(row => Object.keys(row.fields).length === 0)
+)
+
+const prepareFieldsForImport = (fields: FieldMeta[], headers: string[]): { fields: FieldMeta[]; fieldMap: Record<number, number> } => {
+  const nextFields = [...fields]
+  const fieldMap: Record<number, number> = {}
+  const blankFieldIndexes = nextFields
+    .map((field, index) => ({ field, index }))
+    .filter(({ field }) => field.name.trim() === '')
+    .map(({ index }) => index)
+  const usedBlankFieldIndexes = new Set<number>()
+  let nextFieldId = Math.max(0, ...nextFields.map(field => field.id)) + 1
+
+  headers.forEach((header, csvIndex) => {
+    const normalizedHeader = normalizeImportedHeader(header, csvIndex)
+    const matchingIndex = nextFields.findIndex(
+      field => field.name.trim() !== '' && field.name.toLowerCase() === normalizedHeader.toLowerCase(),
+    )
+    if (matchingIndex >= 0) {
+      fieldMap[csvIndex] = matchingIndex
+      return
+    }
+
+    const blankFieldIndex = blankFieldIndexes.find(index => !usedBlankFieldIndexes.has(index))
+    if (blankFieldIndex !== undefined) {
+      usedBlankFieldIndexes.add(blankFieldIndex)
+      nextFields[blankFieldIndex] = { ...nextFields[blankFieldIndex], name: normalizedHeader }
+      fieldMap[csvIndex] = blankFieldIndex
+      return
+    }
+
+    nextFields.push({
+      id: nextFieldId++,
+      name: normalizedHeader,
+      type: 'text',
+      order: nextFields.length + 1,
+      primary: nextFields.length === 0,
+      readOnly: false,
+    })
+    fieldMap[csvIndex] = nextFields.length - 1
+  })
+
+  return { fields: nextFields, fieldMap }
+}
+
+const parseDelimitedLine = (line: string, delimiter: string): string[] => {
+  const result: string[] = []
+  let current = ''
+  let inQuotes = false
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (ch === '"' && !inQuotes) {
+      inQuotes = true
+    } else if (ch === '"' && inQuotes && line[i + 1] === '"') {
+      current += '"'
+      i++
+    } else if (ch === '"' && inQuotes) {
+      inQuotes = false
+    } else if (ch === delimiter && !inQuotes) {
+      result.push(current)
+      current = ''
+    } else {
+      current += ch
+    }
+  }
+
+  result.push(current)
+  return result
+}
+
+const parseWhitespaceLine = (line: string): string[] => line.trim().split(/\s+/)
+
+const resetWorkbookDecorations = () => {
+  useCellFormatStore.getState().reset()
+  useConditionalFormatStore.getState().reset()
+  useCommentStore.getState().reset()
+  useCellChangeStore.getState().reset()
 }
 
 export const getArrowNavigationTarget = (
@@ -248,7 +404,7 @@ interface ExcelState {
   // ── Export / Import ───────────────────────────────
   exportToCsv: () => void
   exportToXlsx: () => void
-  importFromCsv: (file: File) => Promise<void>
+  importFromCsv: (file: File, options?: CsvImportOptions) => Promise<void>
   importFromXlsx: (file: File) => Promise<void>
 
   // ── Fill handle ───────────────────────────────────
@@ -272,6 +428,8 @@ interface ExcelState {
   // ── Column widths (local UI state) ────────────────
   colWidths: Record<number, number>
   setColWidth: (fieldId: number, width: number) => void
+  rowHeights: Record<number, number>
+  setRowHeight: (rowId: number, height: number) => void
 
   // ── Deduplicate rows ──────────────────────────────
   deduplicateRows: () => Promise<void>
@@ -390,12 +548,12 @@ export const useExcelStore = create<ExcelState>((set, get) => {
   }
 
   return {
-    tables: [],
-    activeTableId: null,
-    sheet: null,
-    activeCell: { rowIndex: 0, colIndex: 0 },
-    selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
-    anchorCell: { rowIndex: 0, colIndex: 0 },
+    tables: [makeDefaultTableMeta()],
+    activeTableId: DEFAULT_TABLE_ID,
+    sheet: makeBlankSheet(),
+    activeCell: DEFAULT_ACTIVE_CELL,
+    selection: DEFAULT_SELECTION,
+    anchorCell: DEFAULT_ACTIVE_CELL,
     isEditing: false,
     editValue: '',
     formulaSelectionStart: 0,
@@ -405,13 +563,14 @@ export const useExcelStore = create<ExcelState>((set, get) => {
     searchText: '',
     sortConfig: null,
     columnFilters: {},
-    allRows: [],
+    allRows: makeBlankRows(),
     undoStack: [],
     redoStack: [],
     zoomLevel: 1.0,
     frozenColCount: 0,
     frozenRowCount: 0,
     colWidths: {},
+    rowHeights: {},
     hiddenFieldIds: [],
     cutSelection: null,
 
@@ -426,7 +585,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
         shell: 'nexcel',
         label: t.name,
       }))
-      if (tables.length > 0 && !get().activeTableId) {
+      if (tables.length > 0 && get().sheet === null) {
         await get().loadSheet(tables[0].id)
       }
     },
@@ -460,6 +619,8 @@ export const useExcelStore = create<ExcelState>((set, get) => {
           statusText: `${rowsResult.total} rows`,
           undoStack: [],
           redoStack: [],
+          colWidths: {},
+          rowHeights: {},
         })
       } catch (err) {
         set(s => ({ sheet: s.sheet ? { ...s.sheet, isLoading: false, error: String(err) } : null }))
@@ -779,6 +940,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
       const { sheet } = get()
       if (!sheet) return
       NexcelLogger.store('info', 'newSheet', {})
+      resetWorkbookDecorations()
 
       // Reset server state first so api-server stays in sync
       try {
@@ -786,26 +948,35 @@ export const useExcelStore = create<ExcelState>((set, get) => {
         if (res.ok) {
           const data = await res.json()
           const serverFields: FieldMeta[] = data.data?.fields ?? []
-          const rowCount: number = data.data?.rowCount ?? 100
-          const blankRows: RowRecord[] = Array.from({ length: rowCount }, (_, i) => ({
-            id: i + 1,
-            order: `${(i + 1).toFixed(5)}`,
-            fields: {} as Record<number, unknown>,
-          }))
+          const rowCount: number = data.data?.rowCount ?? DEFAULT_ROW_COUNT
+          const blankRows = makeBlankRows(rowCount)
+          const blankSheet = makeBlankSheet(serverFields, blankRows)
           set({
             allRows: blankRows,
-            sheet: { ...sheet, fields: serverFields, rows: blankRows, totalCount: rowCount },
+            sheet: blankSheet,
             undoStack: [],
             redoStack: [],
             sortConfig: null,
             columnFilters: {},
             searchText: '',
-            selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
-            activeCell: { rowIndex: 0, colIndex: 0 },
+            tables: [makeDefaultTableMeta()],
+            activeTableId: DEFAULT_TABLE_ID,
+            selection: DEFAULT_SELECTION,
+            activeCell: DEFAULT_ACTIVE_CELL,
+            anchorCell: DEFAULT_ACTIVE_CELL,
+            isEditing: false,
+            editValue: '',
+            formulaSelectionStart: 0,
+            formulaSelectionEnd: 0,
+            formulaEditor: null,
             frozenRowCount: 0,
             frozenColCount: 0,
             colWidths: {},
+            rowHeights: {},
             zoomLevel: 1.0,
+            hiddenFieldIds: [],
+            cutSelection: null,
+            statusText: 'Ready',
           })
           return
         }
@@ -814,35 +985,35 @@ export const useExcelStore = create<ExcelState>((set, get) => {
       }
 
       // Fallback: local-only reset (server unreachable)
-      const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-      const blankFields: FieldMeta[] = LETTERS.split('').map((_, i) => ({
-        id: i + 1,
-        name: '',
-        type: 'text' as const,
-        order: i + 1,
-        primary: i === 0,
-        readOnly: false,
-      }))
-      const blankRows: RowRecord[] = Array.from({ length: 100 }, (_, i) => ({
-        id: i + 1,
-        order: `${(i + 1).toFixed(5)}`,
-        fields: {} as Record<number, unknown>,
-      }))
+      const blankFields = makeBlankFields()
+      const blankRows = makeBlankRows()
 
       set({
+        tables: [makeDefaultTableMeta()],
+        activeTableId: DEFAULT_TABLE_ID,
         allRows: blankRows,
-        sheet: { ...sheet, fields: blankFields, rows: blankRows, totalCount: 100 },
+        sheet: makeBlankSheet(blankFields, blankRows),
         undoStack: [],
         redoStack: [],
         sortConfig: null,
         columnFilters: {},
         searchText: '',
-        selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
-        activeCell: { rowIndex: 0, colIndex: 0 },
+        selection: DEFAULT_SELECTION,
+        activeCell: DEFAULT_ACTIVE_CELL,
+        anchorCell: DEFAULT_ACTIVE_CELL,
+        isEditing: false,
+        editValue: '',
+        formulaSelectionStart: 0,
+        formulaSelectionEnd: 0,
+        formulaEditor: null,
         frozenRowCount: 0,
         frozenColCount: 0,
         colWidths: {},
+        rowHeights: {},
         zoomLevel: 1.0,
+        hiddenFieldIds: [],
+        cutSelection: null,
+        statusText: 'Ready',
       })
     },
 
@@ -934,42 +1105,26 @@ export const useExcelStore = create<ExcelState>((set, get) => {
       })
     },
 
-    importFromCsv: async (file: File) => {
+    importFromCsv: async (file: File, options) => {
       const text = await file.text()
       const lines = text.split(/\r?\n/).filter(l => l.trim())
       if (lines.length === 0) return
-
-      // Parse CSV (handles quoted fields with commas)
-      const parse = (line: string) => {
-        const result: string[] = []
-        let current = ''
-        let inQuotes = false
-        for (let i = 0; i < line.length; i++) {
-          const ch = line[i]
-          if (ch === '"' && !inQuotes) { inQuotes = true }
-          else if (ch === '"' && inQuotes && line[i + 1] === '"') { current += '"'; i++ }
-          else if (ch === '"' && inQuotes) { inQuotes = false }
-          else if (ch === ',' && !inQuotes) { result.push(current); current = '' }
-          else { current += ch }
-        }
-        result.push(current)
-        return result
-      }
+      const mode = options?.mode ?? 'delimiter'
+      const delimiter = options?.delimiter ?? ','
+      const parse = mode === 'whitespace'
+        ? parseWhitespaceLine
+        : (line: string) => parseDelimitedLine(line, delimiter)
 
       const headers = parse(lines[0])
-      const { sheet } = get()
+      const { sheet, allRows } = get()
       if (!sheet) return
 
-      // Map CSV columns to fields by name (case-insensitive)
-      const fieldMap: Record<number, number> = {} // csvColIndex -> fieldIndex
-      headers.forEach((h, i) => {
-        const fi = sheet.fields.findIndex(f => f.name.toLowerCase() === h.toLowerCase())
-        if (fi >= 0) fieldMap[i] = fi
-      })
+      const { fields: importedFields, fieldMap } = prepareFieldsForImport(sheet.fields, headers)
+      const replaceExistingRows = isPristineBlankWorkbook(sheet, allRows)
 
-      // Build new rows (appended to existing)
+      // Build imported rows
       const newRows: RowRecord[] = []
-      const maxId = Math.max(...sheet.rows.map(r => r.id), 0)
+      const maxId = Math.max(...allRows.map(r => r.id), 0)
 
       lines.slice(1).forEach((line, li) => {
         if (!line.trim()) return
@@ -978,7 +1133,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
         cols.forEach((val, ci) => {
           const fi = fieldMap[ci]
           if (fi !== undefined) {
-            const field = sheet.fields[fi]
+            const field = importedFields[fi]
             fields[field.id] = val
           }
         })
@@ -989,10 +1144,16 @@ export const useExcelStore = create<ExcelState>((set, get) => {
         })
       })
 
-      const allRows = [...sheet.rows, ...newRows]
+      const nextAllRows = replaceExistingRows ? newRows : [...allRows, ...newRows]
       set({
-        sheet: { ...sheet, rows: allRows, totalCount: sheet.totalCount + newRows.length },
-        statusText: `Imported ${newRows.length} rows`,
+        sheet: { ...sheet, fields: importedFields, rows: nextAllRows, totalCount: nextAllRows.length },
+        allRows: nextAllRows,
+        activeCell: DEFAULT_ACTIVE_CELL,
+        selection: DEFAULT_SELECTION,
+        anchorCell: DEFAULT_ACTIVE_CELL,
+        statusText: mode === 'whitespace'
+          ? `Imported ${newRows.length} rows using whitespace parsing`
+          : `Imported ${newRows.length} rows using "${delimiter}" delimiter`,
       })
     },
 
@@ -1024,7 +1185,7 @@ export const useExcelStore = create<ExcelState>((set, get) => {
       const buffer = await file.arrayBuffer()
       const wb = XLSX.read(buffer, { type: 'array' })
 
-      const { sheet } = get()
+      const { sheet, allRows } = get()
       if (!sheet) return
 
       // Use first sheet
@@ -1037,17 +1198,12 @@ export const useExcelStore = create<ExcelState>((set, get) => {
       if (data.length === 0) return
 
       const headers = data[0].map(h => String(h ?? ''))
-
-      // Map headers to fields by name (case-insensitive)
-      const fieldMap: Record<number, number> = {}
-      headers.forEach((h, i) => {
-        const fi = sheet.fields.findIndex(f => f.name.toLowerCase() === h.toLowerCase())
-        if (fi >= 0) fieldMap[i] = fi
-      })
+      const { fields: importedFields, fieldMap } = prepareFieldsForImport(sheet.fields, headers)
+      const replaceExistingRows = isPristineBlankWorkbook(sheet, allRows)
 
       // Build new rows
       const newRows: RowRecord[] = []
-      const maxId = Math.max(...sheet.rows.map(r => r.id), 0)
+      const maxId = Math.max(...allRows.map(r => r.id), 0)
 
       data.slice(1).forEach((rowData, li) => {
         if (!rowData.some(v => v !== '')) return  // skip empty rows
@@ -1055,16 +1211,20 @@ export const useExcelStore = create<ExcelState>((set, get) => {
         rowData.forEach((val, ci) => {
           const fi = fieldMap[ci]
           if (fi !== undefined) {
-            const field = sheet.fields[fi]
+            const field = importedFields[fi]
             fields[field.id] = String(val)
           }
         })
         newRows.push({ id: maxId + li + 1, order: `${maxId + li + 1}.00`, fields })
       })
 
-      const allRows = [...sheet.rows, ...newRows]
+      const nextAllRows = replaceExistingRows ? newRows : [...allRows, ...newRows]
       set({
-        sheet: { ...sheet, rows: allRows, totalCount: sheet.totalCount + newRows.length },
+        sheet: { ...sheet, fields: importedFields, rows: nextAllRows, totalCount: nextAllRows.length },
+        allRows: nextAllRows,
+        activeCell: DEFAULT_ACTIVE_CELL,
+        selection: DEFAULT_SELECTION,
+        anchorCell: DEFAULT_ACTIVE_CELL,
         statusText: `Imported ${newRows.length} rows from ${wsName}`,
       })
     },
@@ -1192,6 +1352,10 @@ export const useExcelStore = create<ExcelState>((set, get) => {
 
     setColWidth: (fieldId: number, width: number) => {
       set(s => ({ colWidths: { ...s.colWidths, [fieldId]: width } }))
+    },
+
+    setRowHeight: (rowId: number, height: number) => {
+      set(s => ({ rowHeights: { ...s.rowHeights, [rowId]: height } }))
     },
 
     // ── Deduplicate rows ──────────────────────────────

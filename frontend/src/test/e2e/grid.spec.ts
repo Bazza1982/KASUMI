@@ -18,8 +18,8 @@ test.describe('Grid loading', () => {
     await page.waitForTimeout(500)
   })
 
-  test('page title is Kasumi Nexcel', async ({ page }) => {
-    await expect(page).toHaveTitle(/Kasumi Nexcel/i)
+  test('page title uses the unified Kasumi brand', async ({ page }) => {
+    await expect(page).toHaveTitle(/KASUMI - Where Documents Meet Intelligence/i)
   })
 
   test('ribbon bar is visible', async ({ page }) => {
@@ -112,6 +112,17 @@ test.describe('Formula editing', () => {
     await expect(page.getByTestId('grid-inline-formula-hint-overlay')).toBeVisible()
   })
 
+  test('typing into a selected cell starts editing without duplicating characters', async ({ page }) => {
+    await page.getByTestId('grid-cell-0-1').click()
+    const inlineEditor = page.getByTestId('grid-inline-editor')
+    const formulaBar = page.getByTestId('formula-bar-input')
+
+    await page.keyboard.type('di')
+
+    await expect(inlineEditor).toHaveValue('di')
+    await expect(formulaBar).toHaveValue('di')
+  })
+
   test('paste selects the full pasted rectangle from the original anchor cell', async ({ page }) => {
     await page.getByTestId('grid-cell-0-0').click()
     await page.evaluate(() => {
@@ -148,5 +159,93 @@ test.describe('Formula editing', () => {
     await expect(page.getByTestId('grid-cell-3-0')).toContainText('Fix login bug')
     await expect(page.getByTestId('grid-cell-3-0')).toHaveCSS('outline-style', 'solid')
     await expect(page.getByText('A1:A4')).toBeVisible()
+  })
+
+  test('column widths and row heights can be resized from their headers', async ({ page }) => {
+    const columnHeader = page.getByTestId('grid-column-header-0')
+    const columnHandle = page.getByTestId('grid-column-resize-0')
+    const rowHeader = page.getByTestId('grid-row-header-0')
+    const rowHandle = page.getByTestId('grid-row-resize-0')
+
+    const headerBoxBefore = await columnHeader.boundingBox()
+    const rowBoxBefore = await rowHeader.boundingBox()
+    if (!headerBoxBefore || !rowBoxBefore) throw new Error('Resize targets not rendered')
+
+    const columnHandleBox = await columnHandle.boundingBox()
+    const rowHandleBox = await rowHandle.boundingBox()
+    if (!columnHandleBox || !rowHandleBox) throw new Error('Resize handles not rendered')
+
+    await page.mouse.move(columnHandleBox.x + columnHandleBox.width / 2, columnHandleBox.y + columnHandleBox.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(columnHandleBox.x + 40, columnHandleBox.y + columnHandleBox.height / 2, { steps: 8 })
+    await page.mouse.up()
+
+    await page.mouse.move(rowHandleBox.x + rowHandleBox.width / 2, rowHandleBox.y + rowHandleBox.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(rowHandleBox.x + rowHandleBox.width / 2, rowHandleBox.y + 18, { steps: 8 })
+    await page.mouse.up()
+
+    const headerBoxAfter = await columnHeader.boundingBox()
+    const rowBoxAfter = await rowHeader.boundingBox()
+    if (!headerBoxAfter || !rowBoxAfter) throw new Error('Resized targets not rendered')
+
+    expect(headerBoxAfter.width).toBeGreaterThan(headerBoxBefore.width + 20)
+    expect(rowBoxAfter.height).toBeGreaterThan(rowBoxBefore.height + 8)
+  })
+
+  test('double-clicking a column boundary auto-fits the width', async ({ page }) => {
+    const columnHeader = page.getByTestId('grid-column-header-0')
+    const columnHandle = page.getByTestId('grid-column-resize-0')
+
+    const headerBoxBefore = await columnHeader.boundingBox()
+    const handleBox = await columnHandle.boundingBox()
+    if (!headerBoxBefore || !handleBox) throw new Error('Column resize target not rendered')
+
+    await page.mouse.dblclick(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2)
+
+    const headerBoxAfter = await columnHeader.boundingBox()
+    if (!headerBoxAfter) throw new Error('Auto-fit result not rendered')
+
+    expect(headerBoxAfter.width).not.toBe(headerBoxBefore.width)
+    expect(headerBoxAfter.width).toBeGreaterThanOrEqual(60)
+  })
+
+  test('header context menus can set column width and row height', async ({ page }) => {
+    const columnHeader = page.getByTestId('grid-column-header-0')
+    const rowHeader = page.getByTestId('grid-row-header-0')
+
+    const headerBoxBefore = await columnHeader.boundingBox()
+    const rowBoxBefore = await rowHeader.boundingBox()
+    if (!headerBoxBefore || !rowBoxBefore) throw new Error('Header targets not rendered')
+
+    page.once('dialog', async dialog => {
+      expect(dialog.message()).toContain('Column Width')
+      await dialog.accept('180')
+    })
+    await columnHeader.click({ button: 'right' })
+    await page.getByText('Column Width...', { exact: true }).click()
+
+    page.once('dialog', async dialog => {
+      expect(dialog.message()).toContain('Row Height')
+      await dialog.accept('44')
+    })
+    await rowHeader.click({ button: 'right' })
+    await page.getByText('Row Height...', { exact: true }).click()
+
+    const headerBoxAfter = await columnHeader.boundingBox()
+    const rowBoxAfter = await rowHeader.boundingBox()
+    if (!headerBoxAfter || !rowBoxAfter) throw new Error('Resized header targets not rendered')
+
+    expect(headerBoxAfter.width).toBeGreaterThan(headerBoxBefore.width + 40)
+    expect(rowBoxAfter.height).toBeGreaterThan(rowBoxBefore.height + 10)
+  })
+
+  test('Home ribbon Wrap Text toggles wrapped cell rendering', async ({ page }) => {
+    const cell = page.getByTestId('grid-cell-0-0')
+    await cell.click()
+    await page.getByTitle('Wrap Text').click()
+
+    const whiteSpace = await cell.locator('span').first().evaluate(node => window.getComputedStyle(node).whiteSpace)
+    expect(whiteSpace).toBe('pre-wrap')
   })
 })

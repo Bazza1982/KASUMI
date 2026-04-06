@@ -93,6 +93,28 @@ export const PageSettingsPanel: React.FC<Props> = ({ onClose }) => {
         </div>
       </div>
 
+      <div style={section}>
+        <div style={sectionTitle}>Header / Footer</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label style={label}>
+            <input
+              type="checkbox"
+              checked={localPs.differentFirstPage}
+              onChange={e => setLocalPs(p => ({ ...p, differentFirstPage: e.target.checked }))}
+            />
+            Different first page
+          </label>
+          <label style={label}>
+            <input
+              type="checkbox"
+              checked={localPs.differentOddEven}
+              onChange={e => setLocalPs(p => ({ ...p, differentOddEven: e.target.checked }))}
+            />
+            Different odd/even pages
+          </label>
+        </div>
+      </div>
+
       {/* Watermark */}
       <div style={section}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>

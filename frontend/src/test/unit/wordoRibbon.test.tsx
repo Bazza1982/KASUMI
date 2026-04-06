@@ -18,90 +18,41 @@ const defaultProps = {
   activeTab: 'File',
 }
 
-function setMode(mode: 'data-entry' | 'analyst' | 'admin') {
-  useWordoAccessStore.getState().setMode(mode)
-}
-
-describe('WordoRibbon — data-entry mode', () => {
-  beforeEach(() => setMode('data-entry'))
-
-  it('renders without crashing', () => {
-    render(<WordoRibbon {...defaultProps} />)
-    // Mode button label is "✏ Data Entry"
-    expect(screen.getByText(/Data Entry/i)).toBeDefined()
-  })
-
-  it('Export .docx button is disabled', () => {
-    render(<WordoRibbon {...defaultProps} />)
-    const exportBtn = screen.queryAllByRole('button').find(b =>
-      b.textContent?.includes('Save As .docx')
-    ) as HTMLButtonElement | undefined
-    expect(exportBtn?.disabled).toBe(true)
-  })
-
-  it('Import button is disabled', () => {
-    render(<WordoRibbon {...defaultProps} />)
-    const importBtn = screen.queryAllByRole('button').find(b =>
-      b.textContent?.includes('Open .docx')
-    ) as HTMLButtonElement | undefined
-    expect(importBtn?.disabled).toBe(true)
-  })
+beforeEach(() => {
+  useWordoAccessStore.setState(useWordoAccessStore.getInitialState())
 })
 
-describe('WordoRibbon — analyst mode', () => {
-  beforeEach(() => setMode('analyst'))
-
-  it('renders with Analyst mode button', () => {
+describe('WordoRibbon', () => {
+  it('renders without crashing', () => {
     render(<WordoRibbon {...defaultProps} />)
-    expect(screen.getByText(/Analyst/i)).toBeDefined()
+    expect(screen.getByText(/Save As \.docx/i)).toBeDefined()
   })
 
-  it('Export .docx button is enabled', () => {
+  it('does not render legacy mode buttons', () => {
+    render(<WordoRibbon {...defaultProps} />)
+    expect(screen.queryByText(/Data Entry/i)).toBeNull()
+    expect(screen.queryByText(/Analyst/i)).toBeNull()
+    expect(screen.queryByText(/Admin/i)).toBeNull()
+    expect(screen.queryByText(/^MODE$/i)).toBeNull()
+  })
+
+  it('export button is enabled by default', () => {
     render(<WordoRibbon {...defaultProps} />)
     const exportBtn = screen.queryAllByRole('button').find(b =>
       b.textContent?.includes('Save As .docx')
     ) as HTMLButtonElement | undefined
     expect(exportBtn?.disabled).toBe(false)
   })
-})
 
-describe('WordoRibbon — admin mode', () => {
-  beforeEach(() => setMode('admin'))
-
-  it('renders with Admin mode button', () => {
+  it('import button is enabled by default', () => {
     render(<WordoRibbon {...defaultProps} />)
-    expect(screen.getByText(/Admin/i)).toBeDefined()
-  })
-})
-
-describe('WordoRibbon — mode switching', () => {
-  it('clicking DATA-ENTRY mode button calls setMode', () => {
-    setMode('analyst')
-    render(<WordoRibbon {...defaultProps} />)
-    // Find the data-entry mode button (green pill)
-    const deBtn = screen.queryAllByRole('button').find(b =>
-      b.textContent?.includes('Data Entry')
-    )
-    if (deBtn) {
-      fireEvent.click(deBtn)
-      expect(useWordoAccessStore.getState().mode).toBe('data-entry')
-    }
+    const importBtn = screen.queryAllByRole('button').find(b =>
+      b.textContent?.includes('Open .docx')
+    ) as HTMLButtonElement | undefined
+    expect(importBtn?.disabled).toBe(false)
   })
 
-  it('clicking ADMIN mode button switches to admin', () => {
-    setMode('analyst')
-    render(<WordoRibbon {...defaultProps} />)
-    const adminBtn = screen.queryAllByRole('button').find(b =>
-      b.textContent?.includes('Admin') && !b.textContent?.includes('Analyst')
-    )
-    if (adminBtn) {
-      fireEvent.click(adminBtn)
-      expect(useWordoAccessStore.getState().mode).toBe('admin')
-    }
-  })
-
-  it('export callback fires when button clicked in analyst mode', () => {
-    setMode('analyst')
+  it('export callback fires when button clicked', () => {
     const onExportDocx = vi.fn()
     render(<WordoRibbon {...defaultProps} onExportDocx={onExportDocx} />)
     const exportBtn = screen.queryAllByRole('button').find(b =>

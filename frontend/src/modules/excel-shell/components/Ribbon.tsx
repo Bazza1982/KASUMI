@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react'
-import { Copy, Clipboard, Scissors, Bold, Italic, Plus, Trash2, Download, FileSpreadsheet, Upload, Columns, Settings, HelpCircle, MessageSquare, AlignLeft, AlignCenter, AlignRight, Filter, Undo2, Redo2, SortAsc, SortDesc, FilePlus, Printer, Layers, Lock } from 'lucide-react'
+import { Copy, Clipboard, Scissors, Bold, Italic, Plus, Trash2, Download, FileSpreadsheet, Upload, Columns, Settings, HelpCircle, MessageSquare, AlignLeft, AlignCenter, AlignRight, Filter, Undo2, Redo2, SortAsc, SortDesc, FilePlus, Printer, Layers, Lock, WrapText as WrapTextIcon } from 'lucide-react'
 import { getFieldByVisibleCol, getVisibleColIndexFromFieldIndex, useExcelStore } from '../stores/useExcelStore'
+import type { CsvImportOptions } from '../stores/useExcelStore'
 import { useAccessStore } from '../stores/useAccessStore'
 import { useCellFormatStore } from '../stores/useCellFormatStore'
 import { AccessModeSelector } from './AccessModeSelector'
@@ -32,6 +33,36 @@ const TAB_GROUPS: Record<string, string[]> = {
 }
 
 const ZOOM_LEVELS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+
+const promptForCsvImportOptions = (): CsvImportOptions | null => {
+  const mode = window.prompt(
+    'Choose CSV parsing method:\n1 = Comma (,)\n2 = Semicolon (;)\n3 = Tab\n4 = Pipe (|)\n5 = Whitespace\n6 = Custom delimiter',
+    '1',
+  )?.trim()
+
+  if (!mode) return null
+
+  switch (mode) {
+    case '1':
+      return { mode: 'delimiter', delimiter: ',' }
+    case '2':
+      return { mode: 'delimiter', delimiter: ';' }
+    case '3':
+      return { mode: 'delimiter', delimiter: '\t' }
+    case '4':
+      return { mode: 'delimiter', delimiter: '|' }
+    case '5':
+      return { mode: 'whitespace' }
+    case '6': {
+      const customDelimiter = window.prompt('Enter the delimiter character to use for this CSV.', ',')
+      if (!customDelimiter) return null
+      return { mode: 'delimiter', delimiter: customDelimiter[0] }
+    }
+    default:
+      window.alert('CSV import cancelled. Please choose a number from 1 to 6.')
+      return null
+  }
+}
 
 const Ribbon: React.FC<RibbonProps> = ({ onHelp, onToggleComments, showCommentPanel, onFormatSelection, onConditionalFormat, activeTab = 'Home', onPrint, onDeduplicate }) => {
   const { addRow, deleteSelectedRows, exportToCsv, exportToXlsx, importFromCsv, importFromXlsx, searchText, setSearchText, frozenColCount, toggleFreezeFirstCol, frozenRowCount, toggleFreezeFirstRow, cutCells, clearCutAfterPaste, pasteGrid, undo, redo, newSheet, addColumn, deleteColumn, activeCell, sheet, hiddenFieldIds, toggleSort, sortConfig, zoomLevel, setZoomLevel } = useExcelStore()
@@ -168,6 +199,7 @@ const Ribbon: React.FC<RibbonProps> = ({ onHelp, onToggleComments, showCommentPa
         { icon: <AlignLeft size={16} />, label: 'Align L', action: () => onFormatSelection?.({ align: 'left' }), disabled: false },
         { icon: <AlignCenter size={16} />, label: 'Align C', action: () => onFormatSelection?.({ align: 'center' }), disabled: false },
         { icon: <AlignRight size={16} />, label: 'Align R', action: () => onFormatSelection?.({ align: 'right' }), disabled: false },
+        { icon: <WrapTextIcon size={16} />, label: activeCellFormat?.wrapText ? 'Unwrap' : 'Wrap Text', action: () => onFormatSelection?.({ wrapText: !activeCellFormat?.wrapText }), disabled: false },
         { icon: <Filter size={16} />, label: 'Cond. Fmt', action: () => onConditionalFormat?.(), disabled: false },
       ],
     },
@@ -417,7 +449,10 @@ const Ribbon: React.FC<RibbonProps> = ({ onHelp, onToggleComments, showCommentPa
         style={{ display: 'none' }}
         onChange={e => {
           const file = e.target.files?.[0]
-          if (file) importFromCsv(file)
+          if (file) {
+            const options = promptForCsvImportOptions()
+            if (options) void importFromCsv(file, options)
+          }
           e.target.value = ''
         }}
       />

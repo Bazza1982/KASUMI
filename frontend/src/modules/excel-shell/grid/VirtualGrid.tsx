@@ -53,6 +53,14 @@ const ROW_HEADER_WIDTH = 50
 const COL_HEADER_HEIGHT = 44
 const BASE_COL_WIDTH = 110
 const BASE_ROW_HEIGHT = 24
+const MIN_COL_WIDTH = 40
+const MIN_ROW_HEIGHT = 20
+const RESIZE_HIT_SLOP = 10
+
+const isEditableEventTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) return false
+  return target.isContentEditable || Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
+}
 
 // Convert 0-based column index to Excel-style letter(s): 0→A, 25→Z, 26→AA …
 function colLabel(index: number): string {
@@ -220,6 +228,7 @@ function CellContent({
   field,
   isSelectEditing: _isSelectEditing,
   numberFormat,
+  wrapText = false,
   fontSize = 13,
 }: {
   rowIndex: number
@@ -227,6 +236,7 @@ function CellContent({
   field: FieldMeta | null
   isSelectEditing: boolean
   numberFormat?: import('../stores/useCellFormatStore').NumberFormatType
+  wrapText?: boolean
   fontSize?: number
 }) {
   const {
@@ -240,14 +250,43 @@ function CellContent({
     formulaEditor,
     commitCellByField: _commitCellByField,
   } = useExcelStore()
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
   const isActiveCell = activeCell?.rowIndex === rowIndex && activeCell?.colIndex === colIndex
+  const bindInputRef = useCallback((node: HTMLInputElement | null) => {
+    inputRef.current = node
+    if (!node || !isActiveCell || !isEditing) return
+    window.requestAnimationFrame(() => {
+      if (!inputRef.current || inputRef.current !== node) return
+      if (document.activeElement !== node) {
+        node.focus()
+      }
+      const cursor = node.value.length
+      node.setSelectionRange(cursor, cursor)
+      setFormulaEditor('grid')
+      setFormulaSelection(cursor, cursor)
+    })
+  }, [isActiveCell, isEditing, setFormulaEditor, setFormulaSelection])
   const syncFormulaCursor = useCallback(() => {
     const input = inputRef.current
     if (!input) return
     setFormulaEditor('grid')
     setFormulaSelection(input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length)
   }, [setFormulaEditor, setFormulaSelection])
+
+  useEffect(() => {
+    const input = inputRef.current
+    if (!input || !isActiveCell || !isEditing) return
+    const frame = window.requestAnimationFrame(() => {
+      if (document.activeElement !== input) {
+        input.focus()
+      }
+      const cursor = input.value.length
+      input.setSelectionRange(cursor, cursor)
+      setFormulaEditor('grid')
+      setFormulaSelection(cursor, cursor)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [isActiveCell, isEditing, setFormulaEditor, setFormulaSelection])
 
   useEffect(() => {
     const input = inputRef.current
@@ -347,7 +386,7 @@ function CellContent({
     return (
       <>
         <input
-          ref={inputRef}
+          ref={bindInputRef}
           data-testid="grid-inline-editor"
           autoFocus
           style={{
@@ -355,7 +394,7 @@ function CellContent({
             height: '100%',
             border: 'none',
             outline: 'none',
-            padding: '0 4px',
+            padding: wrapText ? '2px 4px' : '0 4px',
             fontFamily: 'inherit',
             fontSize: `${fontSize}px`,
             backgroundColor: 'transparent',
@@ -457,12 +496,15 @@ function CellContent({
   return (
     <span
       style={{
-        padding: '0 4px',
+        padding: wrapText ? '2px 4px' : '0 4px',
         fontSize: `${fontSize}px`,
         overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
+        textOverflow: wrapText ? 'clip' : 'ellipsis',
+        whiteSpace: wrapText ? 'pre-wrap' : 'nowrap',
+        overflowWrap: wrapText ? 'anywhere' : 'normal',
         width: '100%',
+        display: 'block',
+        lineHeight: wrapText ? 1.25 : undefined,
         color: field.type === 'number' ? '#1a1a2e' : undefined,
         textAlign: field.type === 'number' ? 'right' : 'left',
       }}
@@ -479,13 +521,11 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
   const colHeadersInnerRef = useRef<HTMLDivElement>(null)
   const rowHeadersRef = useRef<HTMLDivElement>(null)
   const cornerRef = useRef<HTMLDivElement>(null)
-
-  // Column widths state + ref for non-stale access in callbacks
-  const [colWidths, setColWidths] = useState<Record<number, number>>({})
-  const colWidthsRef = useRef<Record<number, number>>({})
+  const lastKeyboardEventRef = useRef<{ key: string; timeStamp: number } | null>(null)
 
   // Resize drag state
-  const resizingRef = useRef<{ colIndex: number; startX: number; startWidth: number } | null>(null)
+  const resizingRef = useRef<{ fieldId: number; startX: number; startWidth: number; pointerId: number } | null>(null)
+  const rowResizingRef = useRef<{ rowId: number; startY: number; startHeight: number; pointerId: number } | null>(null)
   // Track whether a resize just happened so header click doesn't trigger sort
   const isResizingActiveRef = useRef(false)
 
@@ -503,6 +543,18 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
     dstEndRow: number; dstEndCol: number
     active: boolean
   } | null>(null)
+
+  const focusInlineEditor = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const editor = parentRef.current?.querySelector<HTMLInputElement>('[data-testid="grid-inline-editor"]')
+      if (!editor) return
+      editor.focus()
+      const cursor = editor.value.length
+      editor.setSelectionRange(cursor, cursor)
+      useExcelStore.getState().setFormulaEditor('grid')
+      useExcelStore.getState().setFormulaSelection(cursor, cursor)
+    })
+  }, [])
 
   useEffect(() => {
     if (!autoFocus) return
@@ -550,6 +602,11 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
     x: number
     y: number
   } | null>(null)
+  const [rowHeaderCtxMenu, setRowHeaderCtxMenu] = useState<{
+    rowIndex: number
+    x: number
+    y: number
+  } | null>(null)
 
   const {
     sheet,
@@ -566,15 +623,18 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
     frozenRowCount,
     zoomLevel,
     hiddenFieldIds,
+    colWidths,
+    rowHeights,
     setActiveCell,
     setSelection,
     setSelectionState,
     setAnchor,
     enterEdit,
     exitEdit,
+    setEditValue,
+    setFormulaSelection,
     clearCells,
     pasteGrid,
-    loadTables,
     deleteSelectedRows,
     insertRowAt,
     undo,
@@ -584,6 +644,8 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
     toggleHideColumn,
     showAllColumns,
     commitCellByField,
+    setColWidth,
+    setRowHeight,
     cutSelection,
     renameField,
     addRow,
@@ -594,9 +656,6 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
   const { hasCellComment } = useCommentStore()
 
   NexcelLogger.grid('debug', 'render', { rows: sheet?.rows.length ?? 0 })
-
-  // Initial data load
-  useEffect(() => { loadTables() }, [])
 
   // Compute visible fields (excluding hidden)
   const visibleFields = useMemo(() => getVisibleFields(sheet, hiddenFieldIds), [sheet, hiddenFieldIds])
@@ -639,6 +698,20 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
 
   const rowCount = filteredIndices.length
   const colCount = visibleFields.length
+  const getColumnBaseWidth = useCallback((visibleColIndex: number) => {
+    const field = visibleFields[visibleColIndex]
+    return field ? (colWidths[field.id] ?? BASE_COL_WIDTH) : BASE_COL_WIDTH
+  }, [colWidths, visibleFields])
+  const getColumnWidth = useCallback((visibleColIndex: number) => {
+    return Math.round(getColumnBaseWidth(visibleColIndex) * zoomLevel)
+  }, [getColumnBaseWidth, zoomLevel])
+  const getRowBaseHeight = useCallback((actualRowIndex: number) => {
+    const row = sheet?.rows[actualRowIndex]
+    return row ? (rowHeights[row.id] ?? BASE_ROW_HEIGHT) : BASE_ROW_HEIGHT
+  }, [rowHeights, sheet])
+  const getRowHeight = useCallback((actualRowIndex: number) => {
+    return Math.round(getRowBaseHeight(actualRowIndex) * zoomLevel)
+  }, [getRowBaseHeight, zoomLevel])
 
   const selectionBounds = useMemo(() => getSelectionBounds(selection), [selection])
 
@@ -666,14 +739,13 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
 
   // Zoom-derived sizes — row height scales with zoom; col widths scale default only
   // (user-resized widths are stored in base px and also scaled)
-  const rowH = Math.round(BASE_ROW_HEIGHT * zoomLevel)
   const defaultColW = Math.round(BASE_COL_WIDTH * zoomLevel)
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => rowH,
+    estimateSize: (index) => getRowHeight(filteredIndices[index] ?? index),
     overscan: 10,
   })
 
@@ -681,10 +753,17 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
     horizontal: true,
     count: colCount,
     getScrollElement: () => parentRef.current,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    estimateSize: useCallback((i: number) => Math.round((colWidthsRef.current[i] ?? BASE_COL_WIDTH) * zoomLevel), [zoomLevel]),
+    estimateSize: (index) => getColumnWidth(index),
     overscan: 5,
   })
+
+  useEffect(() => {
+    rowVirtualizer.measure()
+  }, [rowVirtualizer, rowHeights, zoomLevel, filteredIndices])
+
+  useEffect(() => {
+    columnVirtualizer.measure()
+  }, [columnVirtualizer, colWidths, hiddenFieldIds, zoomLevel])
 
   const scrollTo = useCallback((rowIndex: number, colIndex: number) => {
     if (rowIndex >= 0) rowVirtualizer.scrollToIndex(rowIndex, { align: 'auto' })
@@ -727,11 +806,10 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
   const getFrozenLeft = useCallback((visibleColIndex: number) => {
     let left = ROW_HEADER_WIDTH
     for (let i = 0; i < visibleColIndex; i++) {
-      left += Math.round((colWidthsRef.current[i] ?? BASE_COL_WIDTH) * zoomLevel)
+      left += getColumnWidth(i)
     }
     return left
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zoomLevel])
+  }, [getColumnWidth])
 
   // ── Horizontal scroll sync ─────────────────────────────────────────────────
 
@@ -748,35 +826,67 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
 
   // ── Column resize ─────────────────────────────────────────────────────────
 
-  const startResize = useCallback((colIndex: number, e: React.MouseEvent) => {
+  const startResize = useCallback((fieldId: number, startWidth: number, e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.stopPropagation()
-    const startWidth = colWidthsRef.current[colIndex] ?? defaultColW
-    resizingRef.current = { colIndex, startX: e.clientX, startWidth }
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+    resizingRef.current = { fieldId, startX: e.clientX, startWidth, pointerId: e.pointerId }
+  }, [])
+
+  const startRowResize = useCallback((rowId: number, startHeight: number, e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+    rowResizingRef.current = { rowId, startY: e.clientY, startHeight, pointerId: e.pointerId }
   }, [])
 
   useEffect(() => {
-    const onMouseMove = (e: MouseEvent) => {
-      const r = resizingRef.current
-      if (!r) return
-      isResizingActiveRef.current = true
-      const newWidth = Math.max(40, r.startWidth + e.clientX - r.startX)
-      colWidthsRef.current = { ...colWidthsRef.current, [r.colIndex]: newWidth }
-      setColWidths({ ...colWidthsRef.current })
-      columnVirtualizer.measure()
-    }
-    const onMouseUp = () => {
+    const endResize = () => {
       resizingRef.current = null
-      // Reset after a tick so the click event (fired after mouseup) sees the flag
+      rowResizingRef.current = null
+      // Reset after a tick so the click event (fired after pointerup) sees the flag
       setTimeout(() => { isResizingActiveRef.current = false }, 0)
     }
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
-    return () => {
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
+
+    const onPointerMove = (e: PointerEvent) => {
+      const r = resizingRef.current
+      const rowResize = rowResizingRef.current
+      if (r) {
+        if (e.pointerId !== r.pointerId) return
+        if ((e.buttons & 1) !== 1) { endResize(); return }
+        isResizingActiveRef.current = true
+        const nextWidth = Math.max(MIN_COL_WIDTH, Math.round(r.startWidth + ((e.clientX - r.startX) / zoomLevel)))
+        setColWidth(r.fieldId, nextWidth)
+      }
+      if (rowResize) {
+        if (e.pointerId !== rowResize.pointerId) return
+        if ((e.buttons & 1) !== 1) { endResize(); return }
+        isResizingActiveRef.current = true
+        const nextHeight = Math.max(MIN_ROW_HEIGHT, Math.round(rowResize.startHeight + ((e.clientY - rowResize.startY) / zoomLevel)))
+        setRowHeight(rowResize.rowId, nextHeight)
+      }
     }
-  }, [columnVirtualizer])
+    const onPointerUp = (e: PointerEvent) => {
+      const colResize = resizingRef.current
+      const activeRowResize = rowResizingRef.current
+      if (
+        (colResize && e.pointerId === colResize.pointerId)
+        || (activeRowResize && e.pointerId === activeRowResize.pointerId)
+      ) {
+        endResize()
+      }
+    }
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    window.addEventListener('pointercancel', endResize)
+    window.addEventListener('blur', endResize)
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+      window.removeEventListener('pointercancel', endResize)
+      window.removeEventListener('blur', endResize)
+    }
+  }, [setColWidth, setRowHeight, zoomLevel])
 
   // ── Auto-fit column width ─────────────────────────────────────────────────
 
@@ -799,10 +909,48 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
     const maxLen = Math.max(headerLen, maxContentLen)
     const newWidth = Math.max(60, Math.min(300, maxLen * 8 + 16))
 
-    colWidthsRef.current = { ...colWidthsRef.current, [fieldIndex]: newWidth }
-    setColWidths({ ...colWidthsRef.current })
-    columnVirtualizer.measure()
-  }, [sheet, visibleFields, columnVirtualizer])
+    setColWidth(field.id, newWidth)
+  }, [setColWidth, sheet, visibleFields])
+
+  const promptForColumnWidth = useCallback((fieldIndex: number) => {
+    const field = visibleFields[fieldIndex]
+    if (!field) return
+    const currentWidth = getColumnBaseWidth(fieldIndex)
+    const input = window.prompt(`Column Width for "${field.name || colLabel(fieldIndex)}"`, String(currentWidth))
+    if (input == null) return
+    const parsed = Math.round(Number(input))
+    if (!Number.isFinite(parsed) || parsed < MIN_COL_WIDTH) {
+      window.alert(`Please enter a width of at least ${MIN_COL_WIDTH}px.`)
+      return
+    }
+    setColWidth(field.id, parsed)
+  }, [getColumnBaseWidth, setColWidth, visibleFields])
+
+  const promptForRowHeight = useCallback((actualRowIndex: number) => {
+    const row = sheet?.rows[actualRowIndex]
+    if (!row) return
+    const currentHeight = getRowBaseHeight(actualRowIndex)
+    const input = window.prompt(`Row Height for row ${actualRowIndex + 1}`, String(currentHeight))
+    if (input == null) return
+    const parsed = Math.round(Number(input))
+    if (!Number.isFinite(parsed) || parsed < MIN_ROW_HEIGHT) {
+      window.alert(`Please enter a height of at least ${MIN_ROW_HEIGHT}px.`)
+      return
+    }
+    setRowHeight(row.id, parsed)
+  }, [getRowBaseHeight, setRowHeight, sheet])
+
+  const resetColumnWidth = useCallback((fieldIndex: number) => {
+    const field = visibleFields[fieldIndex]
+    if (!field) return
+    setColWidth(field.id, BASE_COL_WIDTH)
+  }, [setColWidth, visibleFields])
+
+  const resetRowHeight = useCallback((actualRowIndex: number) => {
+    const row = sheet?.rows[actualRowIndex]
+    if (!row) return
+    setRowHeight(row.id, BASE_ROW_HEIGHT)
+  }, [setRowHeight, sheet])
 
   // ── Copy selection ────────────────────────────────────────────────────────
 
@@ -834,6 +982,7 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
     const close = () => {
       setContextMenu(null)
       setColHeaderCtxMenu(null)
+      setRowHeaderCtxMenu(null)
     }
     window.addEventListener('click', close)
     return () => window.removeEventListener('click', close)
@@ -851,211 +1000,251 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
     setColHeaderCtxMenu({ fieldIndex, x: e.clientX, y: e.clientY })
   }, [])
 
+  const handleRowHeaderContextMenu = useCallback((rowIndex: number, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setRowHeaderCtxMenu({ rowIndex, x: e.clientX, y: e.clientY })
+  }, [])
+
   // ── Keyboard ──────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    const isGridFocused = () => {
-      const gridEl = parentRef.current
-      if (!gridEl) return false
-      const activeEl = document.activeElement
-      return activeEl === gridEl || (activeEl instanceof Node && gridEl.contains(activeEl))
+  const handleGridPaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+    if (isEditableEventTarget(e.target)) return
+    if (isEditing || !activeCell) return
+    const text = e.clipboardData?.getData('text')
+    if (!text) return
+    e.preventDefault()
+    const rows = text.split(/\r?\n/).filter(r => r.length > 0).map(r => r.split('\t'))
+    pasteGrid(activeCell.rowIndex, activeCell.colIndex, rows)
+    useExcelStore.getState().clearCutAfterPaste()
+  }, [activeCell, isEditing, pasteGrid])
+
+  const handleGridKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (isEditableEventTarget(e.target)) return
+    if (
+      lastKeyboardEventRef.current
+      && lastKeyboardEventRef.current.key === e.key
+      && lastKeyboardEventRef.current.timeStamp === e.timeStamp
+    ) {
+      return
     }
+    lastKeyboardEventRef.current = { key: e.key, timeStamp: e.timeStamp }
 
-    const handlePaste = (e: ClipboardEvent) => {
-      if (isEditing || !isGridFocused()) return
-      const text = e.clipboardData?.getData('text')
-      if (!text || !activeCell) return
-      e.preventDefault()
-      const rows = text.split(/\r?\n/).filter(r => r.length > 0).map(r => r.split('\t'))
-      pasteGrid(activeCell.rowIndex, activeCell.colIndex, rows)
-      useExcelStore.getState().clearCutAfterPaste()
-    }
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isGridFocused()) return
-
-      if (isEditing) {
-        const formulaEditing = isFormulaInputMode(editValue)
-        if (
-          formulaEditing
-          && activeCell
-          && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')
-        ) {
-          e.preventDefault()
-          const next = getFormulaReferenceSelectionTarget(
-            activeCell,
-            selection,
-            anchorCell,
-            e.key,
-            e.shiftKey,
-            rowCount,
-            colCount,
-          )
-          setSelectionState(next.selection, next.activeCell, next.anchorCell)
-          scrollTo(next.activeCell.rowIndex, next.activeCell.colIndex)
-          return
-        }
-
-        if (e.key === 'Enter') {
-          e.preventDefault()
-          exitEdit(true)
-          if (activeCell) {
-            const next = getEnterDestination(activeCell, e.shiftKey)
-            setActiveCell(next.rowIndex, next.colIndex)
-            scrollTo(next.rowIndex, next.colIndex)
-          }
-        } else if (e.key === 'Tab') {
-          e.preventDefault()
-          exitEdit(true)
-          if (activeCell) {
-            if (!e.shiftKey && !selection && activeCell.colIndex === colCount - 1 && activeCell.rowIndex === rowCount - 1) {
-              addRow()
-            }
-            const next = getTabDestination(activeCell, e.shiftKey)
-            setActiveCell(next.rowIndex, next.colIndex)
-            scrollTo(next.rowIndex, next.colIndex)
-          }
-        } else if (e.key === 'Escape') {
-          exitEdit(false)
-          setDropdownTarget(null)
-        }
+    if (isEditing) {
+      const formulaEditing = isFormulaInputMode(editValue)
+      if (
+        formulaEditing
+        && activeCell
+        && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+      ) {
+        e.preventDefault()
+        const next = getFormulaReferenceSelectionTarget(
+          activeCell,
+          selection,
+          anchorCell,
+          e.key,
+          e.shiftKey,
+          rowCount,
+          colCount,
+        )
+        setSelectionState(next.selection, next.activeCell, next.anchorCell)
+        scrollTo(next.activeCell.rowIndex, next.activeCell.colIndex)
         return
       }
 
-      if (!activeCell) return
-      let { rowIndex, colIndex } = activeCell
-      const isShift = e.shiftKey
-
-      switch (e.key) {
-        case 'ArrowUp':
-        case 'ArrowDown':
-        case 'ArrowLeft':
-        case 'ArrowRight':
-          ;({ rowIndex, colIndex } = getArrowNavigationTarget(activeCell, e.key, rowCount, colCount))
-          e.preventDefault()
-          break
-        case 'Tab':
-          e.preventDefault()
-          if (!e.shiftKey && !selection && colIndex === colCount - 1 && rowIndex === rowCount - 1) {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        exitEdit(true)
+        if (activeCell) {
+          const next = getEnterDestination(activeCell, e.shiftKey)
+          setActiveCell(next.rowIndex, next.colIndex)
+          scrollTo(next.rowIndex, next.colIndex)
+        }
+      } else if (e.key === 'Tab') {
+        e.preventDefault()
+        exitEdit(true)
+        if (activeCell) {
+          if (!e.shiftKey && !selection && activeCell.colIndex === colCount - 1 && activeCell.rowIndex === rowCount - 1) {
             addRow()
           }
-          ;({ rowIndex, colIndex } = getTabDestination({ rowIndex, colIndex }, e.shiftKey))
-          setActiveCell(rowIndex, colIndex)
-          scrollTo(rowIndex, colIndex)
-          return
-        case 'Enter':
-          e.preventDefault()
-          ;({ rowIndex, colIndex } = getEnterDestination({ rowIndex, colIndex }, e.shiftKey))
-          setActiveCell(rowIndex, colIndex)
-          scrollTo(rowIndex, colIndex)
-          return
-        case 'F2':
-          e.preventDefault()
-          enterEdit()
-          return
-        case 'Delete':
-        case 'Backspace': {
-          e.preventDefault()
-          const { selection: sel } = useExcelStore.getState()
-          if (sel) {
-            const minRow = Math.min(sel.startRow, sel.endRow)
-            const maxRow = Math.max(sel.startRow, sel.endRow)
-            const minCol = Math.min(sel.startCol, sel.endCol)
-            const maxCol = Math.max(sel.startCol, sel.endCol)
-            const coords: GridCoord[] = []
-            for (let r = minRow; r <= maxRow; r++) {
-              for (let c = minCol; c <= maxCol; c++) {
-                coords.push({ rowIndex: r, colIndex: c })
-              }
+          const next = getTabDestination(activeCell, e.shiftKey)
+          setActiveCell(next.rowIndex, next.colIndex)
+          scrollTo(next.rowIndex, next.colIndex)
+        }
+      } else if (e.key === 'Escape') {
+        exitEdit(false)
+        setDropdownTarget(null)
+      } else if (e.key === 'Backspace') {
+        e.preventDefault()
+        const nextValue = editValue.slice(0, -1)
+        setEditValue(nextValue)
+        setFormulaSelection(nextValue.length, nextValue.length)
+      } else if (e.key === 'Delete') {
+        e.preventDefault()
+        setEditValue('')
+        setFormulaSelection(0, 0)
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault()
+        const nextValue = `${editValue}${e.key}`
+        setEditValue(nextValue)
+        setFormulaSelection(nextValue.length, nextValue.length)
+      }
+      return
+    }
+
+    if (!activeCell) return
+    let { rowIndex, colIndex } = activeCell
+    const isShift = e.shiftKey
+
+    switch (e.key) {
+      case 'ArrowUp':
+      case 'ArrowDown':
+      case 'ArrowLeft':
+      case 'ArrowRight':
+        ;({ rowIndex, colIndex } = getArrowNavigationTarget(activeCell, e.key, rowCount, colCount))
+        e.preventDefault()
+        break
+      case 'Tab':
+        e.preventDefault()
+        if (!e.shiftKey && !selection && colIndex === colCount - 1 && rowIndex === rowCount - 1) {
+          addRow()
+        }
+        ;({ rowIndex, colIndex } = getTabDestination({ rowIndex, colIndex }, e.shiftKey))
+        setActiveCell(rowIndex, colIndex)
+        scrollTo(rowIndex, colIndex)
+        return
+      case 'Enter':
+        e.preventDefault()
+        ;({ rowIndex, colIndex } = getEnterDestination({ rowIndex, colIndex }, e.shiftKey))
+        setActiveCell(rowIndex, colIndex)
+        scrollTo(rowIndex, colIndex)
+        return
+      case 'F2':
+        e.preventDefault()
+        enterEdit()
+        focusInlineEditor()
+        return
+      case 'Delete':
+      case 'Backspace': {
+        e.preventDefault()
+        const { selection: sel } = useExcelStore.getState()
+        if (sel) {
+          const minRow = Math.min(sel.startRow, sel.endRow)
+          const maxRow = Math.max(sel.startRow, sel.endRow)
+          const minCol = Math.min(sel.startCol, sel.endCol)
+          const maxCol = Math.max(sel.startCol, sel.endCol)
+          const coords: GridCoord[] = []
+          for (let r = minRow; r <= maxRow; r++) {
+            for (let c = minCol; c <= maxCol; c++) {
+              coords.push({ rowIndex: r, colIndex: c })
             }
-            clearCells(coords)
+          }
+          clearCells(coords)
+        }
+        return
+      }
+      case 'Home':
+        if (e.ctrlKey) {
+          e.preventDefault()
+          setActiveCell(0, 0)
+          scrollTo(0, 0)
+        } else {
+          e.preventDefault()
+          setActiveCell(activeCell.rowIndex, 0)
+          scrollTo(activeCell.rowIndex, 0)
+        }
+        return
+      case 'End':
+        if (e.ctrlKey) {
+          e.preventDefault()
+          setActiveCell(rowCount - 1, colCount - 1)
+          scrollTo(rowCount - 1, colCount - 1)
+        } else {
+          e.preventDefault()
+          setActiveCell(activeCell.rowIndex, colCount - 1)
+          scrollTo(activeCell.rowIndex, colCount - 1)
+        }
+        return
+      case 'z':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault()
+          if (e.shiftKey) {
+            redo()
+          } else {
+            undo()
           }
           return
         }
-        case 'Home':
-          if (e.ctrlKey) {
-            e.preventDefault()
-            setActiveCell(0, 0)
-            scrollTo(0, 0)
-          } else {
-            e.preventDefault()
-            setActiveCell(activeCell.rowIndex, 0)
-            scrollTo(activeCell.rowIndex, 0)
-          }
+        break
+      case 'y':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault()
+          redo()
           return
-        case 'End':
-          if (e.ctrlKey) {
-            e.preventDefault()
-            setActiveCell(rowCount - 1, colCount - 1)
-            scrollTo(rowCount - 1, colCount - 1)
-          } else {
-            e.preventDefault()
-            setActiveCell(activeCell.rowIndex, colCount - 1)
-            scrollTo(activeCell.rowIndex, colCount - 1)
-          }
+        }
+        break
+      case 'a':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault()
+          selectAllCells()
           return
-        case 'z':
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault()
-            if (e.shiftKey) {
-              redo()
-            } else {
-              undo()
-            }
-            return
-          }
-          break
-        case 'y':
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault()
-            redo()
-            return
-          }
-          break
-        case 'a':
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault()
-            selectAllCells()
-            return
-          }
-          break
-        case 'c':
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault()
-            copySelection()
-            return
-          }
-          break
-        case 'x':
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault()
-            useExcelStore.getState().cutCells()
-            return
-          }
-          break
-        default:
-          if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-            enterEdit(e.key)
-          }
+        }
+        break
+      case 'c':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault()
+          copySelection()
           return
-      }
-
-      if (isShift && anchorCell) {
-        setSelection(anchorCell.rowIndex, anchorCell.colIndex, rowIndex, colIndex)
-      } else {
-        setActiveCell(rowIndex, colIndex)
-      }
-      scrollTo(rowIndex, colIndex)
+        }
+        break
+      case 'x':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault()
+          useExcelStore.getState().cutCells()
+          return
+        }
+        break
+      default:
+        if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault()
+          enterEdit(e.key)
+          focusInlineEditor()
+        }
+        return
     }
 
-    window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('paste', handlePaste)
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('paste', handlePaste)
+    if (isShift && anchorCell) {
+      setSelection(anchorCell.rowIndex, anchorCell.colIndex, rowIndex, colIndex)
+    } else {
+      setActiveCell(rowIndex, colIndex)
     }
-  }, [activeCell, anchorCell, selection, isEditing, editValue, rowCount, colCount,
-    setActiveCell, setSelection, setSelectionState, setAnchor, enterEdit, exitEdit, clearCells, pasteGrid, scrollTo, copySelection, undo, redo, getEnterDestination, getTabDestination, selectAllCells])
+    scrollTo(rowIndex, colIndex)
+  }, [
+    activeCell,
+    anchorCell,
+    selection,
+    isEditing,
+    editValue,
+    rowCount,
+    colCount,
+    setSelectionState,
+    scrollTo,
+    exitEdit,
+    setEditValue,
+    setFormulaSelection,
+    getEnterDestination,
+    setActiveCell,
+    getTabDestination,
+    addRow,
+    clearCells,
+    undo,
+    redo,
+    selectAllCells,
+    copySelection,
+    enterEdit,
+    focusInlineEditor,
+    setSelection,
+  ])
 
   // ── Mouse ─────────────────────────────────────────────────────────────────
 
@@ -1099,10 +1288,12 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
         setDropdownTarget({ rowIndex, field, fieldType: field.type, pos: { top: rect.bottom, left: rect.left } })
       }
       enterEdit()
+      focusInlineEditor()
       return
     }
     enterEdit()
-  }, [setActiveCell, enterEdit])
+    focusInlineEditor()
+  }, [setActiveCell, enterEdit, focusInlineEditor])
 
   const isSelected = (rowIndex: number, colIndex: number) => {
     if (!selectionBounds) return false
@@ -1138,7 +1329,7 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
 
     if (!vRow || !vCol) return null
 
-    const colW = colWidths[endCol] ?? defaultColW
+    const colW = getColumnWidth(endCol)
     return {
       top: vRow.start + vRow.size - 4,
       left: vCol.start + ROW_HEADER_WIDTH + colW - 4,
@@ -1154,7 +1345,7 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
 
     if (!vRow || !vCol || !scrollEl) return null
 
-    const colW = colWidths[activeCell.colIndex] ?? defaultColW
+    const colW = getColumnWidth(activeCell.colIndex)
     const cellLeft = vCol.start + ROW_HEADER_WIDTH
     const viewportLeft = scrollEl.scrollLeft + ROW_HEADER_WIDTH + 8
     const viewportRight = scrollEl.scrollLeft + scrollEl.clientWidth - 12
@@ -1184,7 +1375,7 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
       const y = e.clientY - rect.top + scrollEl.scrollTop
 
       const colItem = columnVirtualizer.getVirtualItems().find(vc => {
-        const w = colWidths[vc.index] ?? defaultColW
+        const w = getColumnWidth(vc.index)
         return x >= vc.start && x < vc.start + w
       })
       const rowItem = rowVirtualizer.getVirtualItems().find(vr => y >= vr.start && y < vr.start + vr.size)
@@ -1313,13 +1504,14 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
             {columnVirtualizer.getVirtualItems().map(vc => {
               const field = visibleFields[vc.index]
               const isColActive = activeCell?.colIndex === vc.index
-              const colW = colWidths[vc.index] ?? defaultColW
+              const colW = getColumnWidth(vc.index)
               const isFrozen = vc.index < frozenColCount
               // Frozen column headers are covered by the overlay; render non-frozen only
               if (isFrozen) return null
               return (
                 <div
                   key={`ch-${vc.index}`}
+                  data-testid={`grid-column-header-${vc.index}`}
                   style={{
                     position: 'absolute',
                     top: 0,
@@ -1398,17 +1590,28 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
                   )}
                   {/* Resize handle */}
                   <div
+                    data-testid={`grid-column-resize-${vc.index}`}
                     style={{
                       position: 'absolute',
                       right: 0,
                       top: 0,
                       bottom: 0,
-                      width: 4,
+                      width: RESIZE_HIT_SLOP,
                       cursor: 'col-resize',
                       zIndex: 10,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
                     }}
-                    onMouseDown={e => startResize(vc.index, e)}
-                  />
+                    onPointerDown={e => field && startResize(field.id, getColumnBaseWidth(vc.index), e)}
+                    onDoubleClick={e => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      autoFitColumn(vc.index)
+                    }}
+                  >
+                    <div style={{ width: 1, height: '60%', backgroundColor: 'rgba(33,115,70,0.28)', borderRadius: 999 }} />
+                  </div>
                 </div>
               )
             })}
@@ -1416,12 +1619,13 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
 
           {/* Frozen column header overlay — always visible, covers frozen cols */}
           {frozenColCount > 0 && visibleFields.slice(0, frozenColCount).map((field, idx) => {
-            const colW = colWidths[idx] ?? defaultColW
-            const leftOffset = visibleFields.slice(0, idx).reduce((sum, _, i) => sum + (colWidths[i] ?? defaultColW), 0)
+            const colW = getColumnWidth(idx)
+            const leftOffset = visibleFields.slice(0, idx).reduce((sum, _, i) => sum + getColumnWidth(i), 0)
             const isColActive = activeCell?.colIndex === idx
             return (
               <div
                 key={`fch-${idx}`}
+                data-testid={`grid-column-header-${idx}`}
                 style={{
                   position: 'absolute',
                   top: 0,
@@ -1500,17 +1704,28 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
                 )}
                 {/* Resize handle */}
                 <div
+                  data-testid={`grid-column-resize-${idx}`}
                   style={{
                     position: 'absolute',
                     right: 0,
                     top: 0,
                     bottom: 0,
-                    width: 4,
+                    width: RESIZE_HIT_SLOP,
                     cursor: 'col-resize',
                     zIndex: 10,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                   }}
-                  onMouseDown={e => startResize(idx, e)}
-                />
+                  onPointerDown={e => startResize(field.id, getColumnBaseWidth(idx), e)}
+                  onDoubleClick={e => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    autoFitColumn(idx)
+                  }}
+                >
+                  <div style={{ width: 1, height: '60%', backgroundColor: 'rgba(33,115,70,0.34)', borderRadius: 999 }} />
+                </div>
               </div>
             )
           })}
@@ -1523,6 +1738,8 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
         style={{ flex: 1, overflow: 'auto', outline: 'none', backgroundColor: 'white', position: 'relative' }}
         tabIndex={0}
         onFocus={() => onSurfaceFocus?.()}
+        onKeyDown={handleGridKeyDown}
+        onPaste={handleGridPaste}
         onPointerDown={e => {
           if (!(e.target instanceof HTMLElement) || !e.target.closest('input, textarea, select, [contenteditable=\"true\"]')) {
             parentRef.current?.focus()
@@ -1544,15 +1761,18 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
           >
             {rowVirtualizer.getVirtualItems().map(vr => {
               const actualRowIndex = filteredIndices[vr.index]
+              const row = sheet.rows[actualRowIndex]
+              const rowHeight = getRowHeight(actualRowIndex)
               return (
                 <div
                   key={`rh-${vr.index}`}
+                  data-testid={`grid-row-header-${actualRowIndex}`}
                   style={{
                     position: 'absolute',
                     top: vr.start,
                     left: 0,
                     width: ROW_HEADER_WIDTH,
-                    height: vr.size,
+                    height: rowHeight,
                     backgroundColor: isEntireRowSelected(actualRowIndex) ? '#d9e8d9' : activeCell?.rowIndex === actualRowIndex ? '#e8f0e8' : '#f3f2f1',
                     borderRight: '1px solid #e1dfdd',
                     borderBottom: '1px solid #e1dfdd',
@@ -1570,8 +1790,27 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
                     e.preventDefault()
                     selectEntireRow(actualRowIndex, e.shiftKey)
                   }}
+                  onContextMenu={e => handleRowHeaderContextMenu(actualRowIndex, e)}
                 >
                   {actualRowIndex + 1}
+                  <div
+                    data-testid={`grid-row-resize-${actualRowIndex}`}
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      height: RESIZE_HIT_SLOP,
+                      cursor: 'row-resize',
+                      zIndex: 10,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    onPointerDown={e => row && startRowResize(row.id, getRowBaseHeight(actualRowIndex), e)}
+                  >
+                    <div style={{ width: '60%', height: 1, backgroundColor: 'rgba(33,115,70,0.28)', borderRadius: 999 }} />
+                  </div>
                 </div>
               )
             })}
@@ -1585,7 +1824,7 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
               const field = visibleFields[vc.index] ?? null
               const active = isActiveCell(actualRowIndex, vc.index)
               const selected = isSelected(actualRowIndex, vc.index)
-              const colW = colWidths[vc.index] ?? defaultColW
+              const colW = getColumnWidth(vc.index)
               const isSelectEditing = active && isEditing && (field?.type === 'single_select' || field?.type === 'multiple_select')
               const isFrozen = vc.index < frozenColCount
 
@@ -1643,7 +1882,7 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
                     outlineOffset: '-2px',
                     zIndex: active ? 4 : (isFrozen && isFrozenRow) ? 5 : (isFrozen || isFrozenRow) ? 3 : 0,
                     display: 'flex',
-                    alignItems: 'center',
+                    alignItems: fmt?.wrapText ? 'stretch' : 'center',
                     userSelect: 'none',
                     cursor: 'default',
                     overflow: 'hidden',
@@ -1660,6 +1899,7 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
                     field={field}
                     isSelectEditing={isSelectEditing}
                     numberFormat={fmt?.numberFormat}
+                    wrapText={fmt?.wrapText}
                     fontSize={Math.round(13 * zoomLevel)}
                   />
                   {hasComment && (
@@ -1812,7 +2052,7 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
 
             if (!vRowStart || !vRowEnd || !vColStart || !vColEnd) return null
 
-            const colW = colWidths[dstEndCol] ?? defaultColW
+            const colW = getColumnWidth(dstEndCol)
 
             return (
               <div style={{
@@ -1969,9 +2209,18 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
           },
           { label: 'separator' },
           {
+            label: 'Column Width...',
+            action: () => { promptForColumnWidth(fi); setColHeaderCtxMenu(null) },
+          },
+          {
             label: 'Auto-fit Width',
             action: () => { autoFitColumn(fi); setColHeaderCtxMenu(null) },
           },
+          {
+            label: 'Reset Width',
+            action: () => { resetColumnWidth(fi); setColHeaderCtxMenu(null) },
+          },
+          { label: 'separator' },
           {
             label: isThisColFrozen ? 'Unfreeze Column' : 'Freeze Column',
             action: () => { toggleFreezeFirstCol(); setColHeaderCtxMenu(null) },
@@ -2027,6 +2276,59 @@ const VirtualGrid = ({ autoFocus = false, focusSignal = 0, onSurfaceFocus }: Vir
                   </div>
                 )
             )}
+          </div>
+        )
+      })()}
+
+      {/* Row header context menu */}
+      {rowHeaderCtxMenu && (() => {
+        const actualRowIndex = rowHeaderCtxMenu.rowIndex
+        const row = sheet?.rows[actualRowIndex]
+        if (!row) return null
+        const items: Array<{ label: string; action?: () => void }> = [
+          {
+            label: 'Row Height...',
+            action: () => { promptForRowHeight(actualRowIndex); setRowHeaderCtxMenu(null) },
+          },
+          {
+            label: 'Reset Height',
+            action: () => { resetRowHeight(actualRowIndex); setRowHeaderCtxMenu(null) },
+          },
+        ]
+        return (
+          <div
+            style={{
+              position: 'fixed',
+              top: rowHeaderCtxMenu.y,
+              left: rowHeaderCtxMenu.x,
+              backgroundColor: 'white',
+              border: '1px solid #e1dfdd',
+              borderRadius: 4,
+              boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+              zIndex: 2000,
+              minWidth: 180,
+              padding: '4px 0',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {items.map((item, i) => (
+              <div
+                key={i}
+                onClick={item.action}
+                style={{
+                  padding: '6px 16px',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 24,
+                }}
+                onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f3f2f1')}
+                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+              >
+                <span>{item.label}</span>
+              </div>
+            ))}
           </div>
         )
       })()}

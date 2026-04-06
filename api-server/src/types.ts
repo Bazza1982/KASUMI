@@ -112,6 +112,11 @@ export interface ParagraphBlock {
   id: string
   content: InlineContent[]
   align?: 'left' | 'center' | 'right' | 'justify'
+  indentLevel?: number
+  lineSpacing?: number | string
+  spaceBefore?: number | string
+  spaceAfter?: number | string
+  pageBreakBefore?: boolean
 }
 
 export interface HeadingBlock {
@@ -119,6 +124,12 @@ export interface HeadingBlock {
   id: string
   level: 1 | 2 | 3 | 4 | 5 | 6
   content: InlineContent[]
+  align?: 'left' | 'center' | 'right' | 'justify'
+  indentLevel?: number
+  lineSpacing?: number | string
+  spaceBefore?: number | string
+  spaceAfter?: number | string
+  pageBreakBefore?: boolean
 }
 
 export interface ListItemBlock {
@@ -127,6 +138,12 @@ export interface ListItemBlock {
   listType: 'bullet' | 'ordered'
   level: number
   content: InlineContent[]
+  align?: 'left' | 'center' | 'right' | 'justify'
+  indentLevel?: number
+  lineSpacing?: number | string
+  spaceBefore?: number | string
+  spaceAfter?: number | string
+  pageBreakBefore?: boolean
 }
 
 export interface TableBlock {
@@ -155,6 +172,12 @@ export interface BlockquoteBlock {
   type: 'blockquote'
   id: string
   content: InlineContent[]
+  align?: 'left' | 'center' | 'right' | 'justify'
+  indentLevel?: number
+  lineSpacing?: number | string
+  spaceBefore?: number | string
+  spaceAfter?: number | string
+  pageBreakBefore?: boolean
 }
 
 export interface PageBreakBlock {
@@ -175,6 +198,8 @@ export interface PageStyle {
   size: 'A4' | 'A3' | 'Letter' | 'Legal'
   orientation: 'portrait' | 'landscape'
   margins: { top: number; bottom: number; left: number; right: number }
+  firstPageDifferent?: boolean
+  oddEvenDifferent?: boolean
 }
 
 export interface WatermarkConfig {
@@ -184,12 +209,21 @@ export interface WatermarkConfig {
   angle: number
 }
 
+export interface HeaderFooterContent {
+  id?: string
+  text?: string
+  html?: string
+  linkedToPrevious?: boolean
+  variant?: 'default' | 'first' | 'even'
+  [key: string]: unknown
+}
+
 export interface DocumentSection {
   id: string
   pageStyle: PageStyle
   watermark?: WatermarkConfig
-  header?: string
-  footer?: string
+  header?: string | HeaderFooterContent
+  footer?: string | HeaderFooterContent
   blocks: AnyBlock[]
 }
 

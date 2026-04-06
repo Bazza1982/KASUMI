@@ -7,7 +7,7 @@
 
 import { EditorState } from 'prosemirror-state'
 import type { LayoutOrchestrator } from '../editor/LayoutOrchestrator'
-import type { KasumiDocument, PageStyle, WatermarkConfig } from '../types/document'
+import type { HeaderFooter, KasumiDocument, PageStyle, WatermarkConfig } from '../types/document'
 import type { Comment } from '../stores/useCommentStore'
 import type { ChangeRecord } from '../stores/useTrackChangeStore'
 import { wordoSchema } from '../editor/schema'
@@ -27,6 +27,8 @@ interface SerializedSection {
   pmDocJson: object
   pageStyle: PageStyle
   watermark?: WatermarkConfig
+  header?: HeaderFooter
+  footer?: HeaderFooter
 }
 
 interface SerializedDocument {
@@ -91,6 +93,8 @@ export function saveDocument(params: {
       pmDocJson: inst.state.doc.toJSON(),
       pageStyle: docSection?.pageStyle ?? doc.defaultPageStyle,
       watermark: docSection?.watermark,
+      header: docSection?.header,
+      footer: docSection?.footer,
     }
   })
 
@@ -138,6 +142,8 @@ export interface LoadResult {
     state: EditorState
     pageStyle: PageStyle
     watermark?: WatermarkConfig
+    header?: HeaderFooter
+    footer?: HeaderFooter
   }[]
   comments: Comment[]
   trackChanges: ChangeRecord[]
@@ -175,7 +181,14 @@ export function loadDocument(docId: string): LoadResult | null {
       ])
     }
     const state = EditorState.create({ doc, plugins: buildPlugins(wordoSchema) })
-    return { sectionId: s.sectionId, state, pageStyle: s.pageStyle, watermark: s.watermark }
+    return {
+      sectionId: s.sectionId,
+      state,
+      pageStyle: s.pageStyle,
+      watermark: s.watermark,
+      header: s.header,
+      footer: s.footer,
+    }
   })
 
   const sizeKB = Math.round(raw.length / 1024)

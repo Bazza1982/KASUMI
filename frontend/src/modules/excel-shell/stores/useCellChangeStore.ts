@@ -19,6 +19,7 @@ interface CellChangeState {
   getChangesForCell: (cellRef: string) => CellChange[]
   getChangesForRow: (rowId: number) => CellChange[]
   getRecentChanges: (limit?: number) => CellChange[]
+  reset: () => void
   persist: () => void
   load: () => void
 }
@@ -51,6 +52,11 @@ export const useCellChangeStore = create<CellChangeState>((set, get) => ({
   getChangesForCell: (cellRef) => get().changes.filter(c => c.cellRef === cellRef),
   getChangesForRow: (rowId) => get().changes.filter(c => c.rowId === rowId),
   getRecentChanges: (limit = 50) => get().changes.slice(0, limit),
+
+  reset: () => {
+    set({ changes: [] })
+    get().persist()
+  },
 
   persist: () => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(get().changes)) }

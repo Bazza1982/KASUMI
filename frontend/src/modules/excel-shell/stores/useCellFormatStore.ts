@@ -10,6 +10,7 @@ export interface CellFormat {
   italic?: boolean
   align?: 'left' | 'center' | 'right'
   numberFormat?: NumberFormatType
+  wrapText?: boolean
 }
 
 export function applyNumberFormat(value: string, fmt: NumberFormatType | undefined): string {
@@ -38,6 +39,7 @@ interface CellFormatState {
   getFormat: (cellRef: string) => CellFormat | null
   clearFormat: (cellRef: string) => void
   clearFormatRange: (cellRefs: string[]) => void
+  reset: () => void
   persist: () => void
   load: () => void
 }
@@ -78,6 +80,11 @@ export const useCellFormatStore = create<CellFormatState>((set, get) => ({
       for (const ref of cellRefs) delete f[ref]
       return { formats: f }
     })
+    get().persist()
+  },
+
+  reset: () => {
+    set({ formats: {} })
     get().persist()
   },
 

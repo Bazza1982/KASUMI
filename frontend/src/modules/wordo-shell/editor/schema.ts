@@ -15,6 +15,43 @@ const blockAttrs = {
   modifiedBy: { default: null as string | null },
 }
 
+const paragraphAttrs = {
+  textAlign:       { default: null as string | null },
+  lineSpacing:     { default: null as string | null },
+  spaceBefore:     { default: null as string | null },
+  spaceAfter:      { default: null as string | null },
+  indentLeft:      { default: null as string | null },
+  indentRight:     { default: null as string | null },
+  textIndent:      { default: null as string | null },
+  pageBreakBefore: { default: false as boolean },
+}
+
+function extractParagraphStyleAttrs(dom: HTMLElement): Record<string, string | boolean | null> {
+  return {
+    textAlign: dom.style.textAlign || null,
+    lineSpacing: dom.style.lineHeight || null,
+    spaceBefore: dom.style.marginTop || null,
+    spaceAfter: dom.style.marginBottom || null,
+    indentLeft: dom.style.marginLeft || null,
+    indentRight: dom.style.marginRight || null,
+    textIndent: dom.style.textIndent || null,
+    pageBreakBefore: dom.style.pageBreakBefore === 'always' || dom.style.breakBefore === 'page',
+  }
+}
+
+function buildParagraphStyle(node: { attrs: Record<string, unknown> }): string | undefined {
+  const styles: string[] = []
+  if (node.attrs.textAlign) styles.push(`text-align: ${String(node.attrs.textAlign)}`)
+  if (node.attrs.lineSpacing) styles.push(`line-height: ${String(node.attrs.lineSpacing)}`)
+  if (node.attrs.spaceBefore) styles.push(`margin-top: ${String(node.attrs.spaceBefore)}`)
+  if (node.attrs.spaceAfter) styles.push(`margin-bottom: ${String(node.attrs.spaceAfter)}`)
+  if (node.attrs.indentLeft) styles.push(`margin-left: ${String(node.attrs.indentLeft)}`)
+  if (node.attrs.indentRight) styles.push(`margin-right: ${String(node.attrs.indentRight)}`)
+  if (node.attrs.textIndent) styles.push(`text-indent: ${String(node.attrs.textIndent)}`)
+  if (node.attrs.pageBreakBefore) styles.push('page-break-before: always')
+  return styles.length > 0 ? styles.join('; ') : undefined
+}
+
 // Inject block attrs into an existing NodeSpec
 function withBlockAttrs(spec: NodeSpec): NodeSpec {
   return {
@@ -53,6 +90,39 @@ function withBlockAttrs(spec: NodeSpec): NodeSpec {
   }
 }
 
+function withParagraphAttrs(spec: NodeSpec): NodeSpec {
+  return {
+    ...spec,
+    attrs: { ...(spec.attrs ?? {}), ...paragraphAttrs },
+    parseDOM: spec.parseDOM?.map(rule => ({
+      ...rule,
+      getAttrs(dom: HTMLElement | string) {
+        const base = typeof rule.getAttrs === 'function' ? rule.getAttrs(dom as HTMLElement) : (rule.getAttrs ?? {})
+        if (base === false) return false
+        if (typeof dom === 'string') return base as Record<string, unknown>
+        return {
+          ...(base as object),
+          ...extractParagraphStyleAttrs(dom),
+        }
+      },
+    })),
+    toDOM: spec.toDOM
+      ? (node: any) => {
+          const result = (spec.toDOM as Function)(node)
+          const style = buildParagraphStyle(node)
+          if (!Array.isArray(result)) return result
+          if (result.length >= 2 && typeof result[1] === 'object' && !Array.isArray(result[1])) {
+            const attrs = result[1] as Record<string, unknown>
+            if (style) attrs.style = attrs.style ? `${String(attrs.style)}; ${style}` : style
+            return result
+          }
+          if (style) result.splice(1, 0, { style })
+          return result
+        }
+      : undefined,
+  }
+}
+
 // ── Build node set ────────────────────────────────────────────────────────────
 const withLists = addListNodes(basicSchema.spec.nodes, 'paragraph block*', 'block')
 
@@ -64,6 +134,12 @@ BLOCK_NODES.forEach(name => {
   const spec = nodes.get(name)
   if (spec) nodes = nodes.update(name, withBlockAttrs(spec))
 })
+
+const paragraphSpec = nodes.get('paragraph')
+if (paragraphSpec) nodes = nodes.update('paragraph', withParagraphAttrs(paragraphSpec))
+
+const headingSpec = nodes.get('heading')
+if (headingSpec) nodes = nodes.update('heading', withParagraphAttrs(headingSpec))
 
 const tables = tableNodes({
   tableGroup: 'block',

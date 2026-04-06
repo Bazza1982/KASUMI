@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   getArrowNavigationTarget,
   getEnterNavigationTarget,
@@ -9,6 +9,10 @@ import {
   useExcelStore,
 } from '../../modules/excel-shell/stores/useExcelStore'
 import { renderCellValue } from '../../modules/excel-shell/grid/renderers'
+import { useCellFormatStore } from '../../modules/excel-shell/stores/useCellFormatStore'
+import { useConditionalFormatStore } from '../../modules/excel-shell/stores/useConditionalFormatStore'
+import { useCommentStore } from '../../modules/excel-shell/stores/useCommentStore'
+import { useCellChangeStore } from '../../modules/excel-shell/stores/useCellChangeStore'
 import type { FieldMeta, RowRecord, SheetContext } from '../../modules/excel-shell/types'
 
 // The store reads localStorage at module evaluation time to decide which adapter
@@ -17,9 +21,29 @@ import type { FieldMeta, RowRecord, SheetContext } from '../../modules/excel-she
 
 const resetState = () => {
   useExcelStore.setState({
-    tables: [],
-    activeTableId: null,
-    sheet: null,
+    tables: [{ id: 1, name: 'Sheet1', databaseId: 1, order: 1 }],
+    activeTableId: 1,
+    sheet: {
+      tableId: 1,
+      tableName: 'Sheet1',
+      viewId: 1,
+      fields: Array.from({ length: 26 }, (_, i) => ({
+        id: i + 1,
+        name: '',
+        type: 'text' as const,
+        order: i + 1,
+        primary: i === 0,
+        readOnly: false,
+      })),
+      rows: Array.from({ length: 100 }, (_, i) => ({
+        id: i + 1,
+        order: `${(i + 1).toFixed(5)}`,
+        fields: {},
+      })),
+      totalCount: 100,
+      isLoading: false,
+      error: null,
+    },
     activeCell: { rowIndex: 0, colIndex: 0 },
     selection: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
     anchorCell: { rowIndex: 0, colIndex: 0 },
@@ -31,11 +55,26 @@ const resetState = () => {
     statusText: 'Ready',
     searchText: '',
     sortConfig: null,
+    columnFilters: {},
+    allRows: Array.from({ length: 100 }, (_, i) => ({
+      id: i + 1,
+      order: `${(i + 1).toFixed(5)}`,
+      fields: {},
+    })),
     undoStack: [],
     redoStack: [],
     frozenColCount: 0,
+    frozenRowCount: 0,
+    colWidths: {},
+    rowHeights: {},
+    zoomLevel: 1.0,
     hiddenFieldIds: [],
+    cutSelection: null,
   })
+  useCellFormatStore.setState({ formats: {} })
+  useConditionalFormatStore.setState({ rules: [] })
+  useCommentStore.setState({ comments: [] })
+  useCellChangeStore.setState({ changes: [] })
 }
 
 const makeSheetFixture = (): SheetContext => {
@@ -80,14 +119,19 @@ describe('useExcelStore', () => {
     resetState()
   })
 
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   // ── 1. Initial state ───────────────────────────────────────────────────────
 
   it('has correct initial state', () => {
     const store = useExcelStore.getState()
     expect(store.activeCell).toEqual({ rowIndex: 0, colIndex: 0 })
     expect(store.isEditing).toBe(false)
-    expect(store.tables).toEqual([])
-    expect(store.sheet).toBeNull()
+    expect(store.tables).toEqual([{ id: 1, name: 'Sheet1', databaseId: 1, order: 1 }])
+    expect(store.sheet?.tableName).toBe('Sheet1')
+    expect(store.sheet?.rows).toHaveLength(100)
   })
 
   // ── 2. loadTables ─────────────────────────────────────────────────────────
@@ -208,6 +252,17 @@ describe('useExcelStore', () => {
 
     useExcelStore.getState().toggleFreezeFirstCol()
     expect(useExcelStore.getState().frozenColCount).toBe(0)
+  })
+
+  it('stores column widths by field id and row heights by row id', () => {
+    seedSheetFixture()
+
+    useExcelStore.getState().setColWidth(3, 220)
+    useExcelStore.getState().setRowHeight(102, 36)
+
+    const store = useExcelStore.getState()
+    expect(store.colWidths).toEqual({ 3: 220 })
+    expect(store.rowHeights).toEqual({ 102: 36 })
   })
 
   // ── 10. toggleHideColumn ──────────────────────────────────────────────────
@@ -376,5 +431,156 @@ describe('useExcelStore', () => {
     expect(store.selection).toEqual({ startRow: 0, startCol: 0, endRow: 1, endCol: 1 })
     expect(store.getCellDisplay(1, 0)).toBe('Three')
     expect(store.getCellRaw(1, 1)).toBe('Four')
+  })
+
+  it('newSheet resets the workbook to a single clean Sheet1 session', async () => {
+    seedSheetFixture()
+    useCellFormatStore.getState().setFormat('101:1', { bgColor: '#ff0000' })
+    useConditionalFormatStore.getState().addRule({
+      fieldId: 1,
+      condition: 'contains',
+      value: 'A',
+      format: { bgColor: '#00ff00' },
+      priority: 1,
+    })
+    useCommentStore.getState().addComment('101:1', 'stale comment')
+    useCellChangeStore.getState().recordChange({
+      cellRef: '101:1',
+      fieldId: 1,
+      rowId: 101,
+      oldValue: '',
+      newValue: 'Alpha',
+      source: 'user_edit',
+    })
+    useExcelStore.setState({
+      tables: [
+        { id: 11, name: 'Legacy A', databaseId: 1, order: 1 },
+        { id: 12, name: 'Legacy B', databaseId: 1, order: 2 },
+      ],
+      activeTableId: 12,
+      activeCell: { rowIndex: 4, colIndex: 2 },
+      selection: { startRow: 1, startCol: 1, endRow: 4, endCol: 2 },
+      anchorCell: { rowIndex: 1, colIndex: 1 },
+      isEditing: true,
+      editValue: 'stale',
+      formulaSelectionStart: 2,
+      formulaSelectionEnd: 5,
+      formulaEditor: 'formula-bar',
+      searchText: 'alpha',
+      sortConfig: { fieldIndex: 1, direction: 'desc' },
+      columnFilters: { 1: { type: 'contains', value: 'x' } },
+      frozenColCount: 1,
+      frozenRowCount: 1,
+      colWidths: { 1: 240 },
+      rowHeights: { 101: 42 },
+      hiddenFieldIds: [2],
+      cutSelection: { startRow: 2, startCol: 2, endRow: 3, endCol: 3 },
+      statusText: 'Busy',
+    })
+
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'))
+
+    await useExcelStore.getState().newSheet()
+
+    const store = useExcelStore.getState()
+    expect(store.tables).toEqual([{ id: 1, name: 'Sheet1', databaseId: 1, order: 1 }])
+    expect(store.activeTableId).toBe(1)
+    expect(store.sheet?.tableId).toBe(1)
+    expect(store.sheet?.tableName).toBe('Sheet1')
+    expect(store.activeCell).toEqual({ rowIndex: 0, colIndex: 0 })
+    expect(store.selection).toEqual({ startRow: 0, startCol: 0, endRow: 0, endCol: 0 })
+    expect(store.anchorCell).toEqual({ rowIndex: 0, colIndex: 0 })
+    expect(store.isEditing).toBe(false)
+    expect(store.editValue).toBe('')
+    expect(store.formulaSelectionStart).toBe(0)
+    expect(store.formulaSelectionEnd).toBe(0)
+    expect(store.formulaEditor).toBeNull()
+    expect(store.searchText).toBe('')
+    expect(store.sortConfig).toBeNull()
+    expect(store.columnFilters).toEqual({})
+    expect(store.frozenColCount).toBe(0)
+    expect(store.frozenRowCount).toBe(0)
+    expect(store.colWidths).toEqual({})
+    expect(store.rowHeights).toEqual({})
+    expect(store.hiddenFieldIds).toEqual([])
+    expect(store.cutSelection).toBeNull()
+    expect(store.statusText).toBe('Ready')
+    expect(store.sheet?.rows).toHaveLength(100)
+    expect(useCellFormatStore.getState().formats).toEqual({})
+    expect(useConditionalFormatStore.getState().rules).toEqual([])
+    expect(useCommentStore.getState().comments).toEqual([])
+    expect(useCellChangeStore.getState().changes).toEqual([])
+  })
+
+  it('importFromCsv hydrates a blank workbook with imported headers and rows', async () => {
+    const csv = 'Name,Status\nAlpha,Todo\nBeta,Done\n'
+    const file = new File([csv], 'fixture.csv', { type: 'text/csv' })
+
+    await useExcelStore.getState().importFromCsv(file)
+
+    const store = useExcelStore.getState()
+    expect(store.sheet?.fields[0]?.name).toBe('Name')
+    expect(store.sheet?.fields[1]?.name).toBe('Status')
+    expect(store.sheet?.rows).toHaveLength(2)
+    expect(store.allRows).toHaveLength(2)
+    expect(store.sheet?.rows[0]?.fields[1]).toBe('Alpha')
+    expect(store.sheet?.rows[0]?.fields[2]).toBe('Todo')
+    expect(store.sheet?.rows[1]?.fields[1]).toBe('Beta')
+    expect(store.sheet?.rows[1]?.fields[2]).toBe('Done')
+  })
+
+  it('importFromCsv supports alternate delimiters when specified', async () => {
+    const csv = 'Name;Status\nAlpha;Todo\nBeta;Done\n'
+    const file = new File([csv], 'fixture.csv', { type: 'text/csv' })
+
+    await useExcelStore.getState().importFromCsv(file, { mode: 'delimiter', delimiter: ';' })
+
+    const store = useExcelStore.getState()
+    expect(store.sheet?.fields[0]?.name).toBe('Name')
+    expect(store.sheet?.fields[1]?.name).toBe('Status')
+    expect(store.sheet?.rows[0]?.fields[1]).toBe('Alpha')
+    expect(store.sheet?.rows[0]?.fields[2]).toBe('Todo')
+    expect(store.statusText).toContain('";"')
+  })
+
+  it('importFromCsv supports whitespace parsing when specified', async () => {
+    const csv = 'Name Status\nAlpha Todo\nBeta Done\n'
+    const file = new File([csv], 'fixture.csv', { type: 'text/csv' })
+
+    await useExcelStore.getState().importFromCsv(file, { mode: 'whitespace' })
+
+    const store = useExcelStore.getState()
+    expect(store.sheet?.fields[0]?.name).toBe('Name')
+    expect(store.sheet?.fields[1]?.name).toBe('Status')
+    expect(store.sheet?.rows[1]?.fields[1]).toBe('Beta')
+    expect(store.sheet?.rows[1]?.fields[2]).toBe('Done')
+    expect(store.statusText).toContain('whitespace')
+  })
+
+  it('importFromXlsx hydrates a blank workbook with imported headers and rows', async () => {
+    const XLSX = await import('xlsx')
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      ['City', 'Country'],
+      ['Hyrule', 'Hyrule Kingdom'],
+      ['Kakariko', 'Hyrule Kingdom'],
+    ])
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Places')
+    const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer
+    const file = new File([buffer], 'places.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    await useExcelStore.getState().importFromXlsx(file)
+
+    const store = useExcelStore.getState()
+    expect(store.sheet?.fields[0]?.name).toBe('City')
+    expect(store.sheet?.fields[1]?.name).toBe('Country')
+    expect(store.sheet?.rows).toHaveLength(2)
+    expect(store.allRows).toHaveLength(2)
+    expect(store.sheet?.rows[0]?.fields[1]).toBe('Hyrule')
+    expect(store.sheet?.rows[0]?.fields[2]).toBe('Hyrule Kingdom')
+    expect(store.sheet?.rows[1]?.fields[1]).toBe('Kakariko')
+    expect(store.sheet?.rows[1]?.fields[2]).toBe('Hyrule Kingdom')
   })
 })

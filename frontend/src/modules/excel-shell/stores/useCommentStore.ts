@@ -28,6 +28,7 @@ interface CommentState {
   getOpenCommentsForCell: (cellRef: string) => NexcelComment[]
   getAllOpenComments: () => NexcelComment[]
   hasCellComment: (cellRef: string) => boolean
+  reset: () => void
   persist: () => void
   load: () => void
 }
@@ -80,6 +81,11 @@ export const useCommentStore = create<CommentState>((set, get) => ({
   getOpenCommentsForCell: (cellRef) => get().comments.filter(c => c.cellRef === cellRef && !c.resolvedAt),
   getAllOpenComments: () => get().comments.filter(c => !c.resolvedAt),
   hasCellComment: (cellRef) => get().comments.some(c => c.cellRef === cellRef && !c.resolvedAt),
+
+  reset: () => {
+    set({ comments: [] })
+    get().persist()
+  },
 
   persist: () => {
     try {

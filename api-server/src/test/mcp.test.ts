@@ -214,6 +214,47 @@ describe('tools/call', () => {
     expect(Array.isArray(parsed.columnStats)).toBe(true)
   })
 
+  it('wordo_execute_semantic_command executes generated wordo.* tools', async () => {
+    const sessionId = await initSession()
+
+    const surfaceRes = await post(
+      rpc('tools/call', { name: 'wordo_get_command_surface', arguments: {} }),
+      { 'mcp-session-id': sessionId },
+    )
+    const surface = JSON.parse(surfaceRes.body.result.content[0].text)
+    expect(surface.some((item: { type: string }) => item.type === 'rewrite_block')).toBe(true)
+
+    const readRes = await post(
+      rpc('tools/call', { name: 'wordo_read_document', arguments: { documentId: '1' } }),
+      { 'mcp-session-id': sessionId },
+    )
+    const document = JSON.parse(readRes.body.result.content[0].text)
+    const sectionId = document.sections[0].id
+    const blockId = document.sections[0].blocks[1].id
+
+    const execRes = await post(
+      rpc('tools/call', {
+        name: 'wordo_execute_semantic_command',
+        arguments: {
+          toolName: 'wordo.rewrite_block',
+          args: { sectionId, blockId, newText: 'Executed over MCP.' },
+        },
+      }),
+      { 'mcp-session-id': sessionId },
+    )
+
+    expect(execRes.body.error).toBeUndefined()
+    const result = JSON.parse(execRes.body.result.content[0].text)
+    expect(result.layoutImpact).toBe('local')
+
+    const auditRes = await post(
+      rpc('tools/call', { name: 'wordo_export_command_audit', arguments: {} }),
+      { 'mcp-session-id': sessionId },
+    )
+    const audit = JSON.parse(auditRes.body.result.content[0].text)
+    expect(audit.summary.commandTypeCounts.rewrite_block).toBeGreaterThan(0)
+  })
+
   it('blocks tools/call on SSE sessions before initialize', async () => {
     const sseRes = await openSse()
     expect(sseRes.status).toBe(200)

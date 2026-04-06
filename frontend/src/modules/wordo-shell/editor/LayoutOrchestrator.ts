@@ -4,6 +4,7 @@
 // Handles: focus routing, cross-section undo, transaction broadcast.
 // ============================================================
 
+import { Node as PmNode } from 'prosemirror-model'
 import { EditorState, Transaction } from 'prosemirror-state'
 import { wordoSchema } from './schema'
 import { buildPlugins } from './sectionPlugins'
@@ -22,12 +23,14 @@ class LayoutOrchestrator {
   private focusedSection: SectionId | null = null
 
   /** Create a new section instance (called when section mounts) */
-  createSection(sectionId: SectionId, initialDoc?: string): SectionInstance {
-    const doc = initialDoc
-      ? wordoSchema.nodeFromJSON(JSON.parse(initialDoc))
-      : wordoSchema.nodes.doc.create(null, [
+  createSection(sectionId: SectionId, initialDoc?: string | PmNode): SectionInstance {
+    const doc = initialDoc == null
+      ? wordoSchema.nodes.doc.create(null, [
           wordoSchema.nodes.paragraph.create(null, wordoSchema.text(' ')),
         ])
+      : typeof initialDoc === 'string'
+        ? wordoSchema.nodeFromJSON(JSON.parse(initialDoc))
+        : initialDoc
 
     const state = EditorState.create({
       doc,

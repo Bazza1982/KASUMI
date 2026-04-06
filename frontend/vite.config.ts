@@ -32,8 +32,11 @@ export default defineConfig(({ command }) => {
       ] : []),
     ],
 
-    // Electron prod build must use relative asset paths
-    base: isElectron && command === 'build' ? './' : '/',
+    // base path:
+    //   - Electron build → relative paths (./)
+    //   - Minato-embed build (VITE_BASE_PATH=/kasumi-app/) → sub-path
+    //   - standalone dev/build → root (/)
+    base: isElectron && command === 'build' ? './' : (process.env.VITE_BASE_PATH ?? '/'),
 
     build: {
       outDir: 'dist',

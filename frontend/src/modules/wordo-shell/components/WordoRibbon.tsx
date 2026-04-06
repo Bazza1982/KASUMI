@@ -8,15 +8,8 @@ import { wrapInList } from 'prosemirror-schema-list'
 import { wordoSchema } from '../editor/schema'
 import type { EditorState } from 'prosemirror-state'
 import type { Transaction } from 'prosemirror-state'
-import type { AccessMode } from '../../../platform/types'
 
 type PmCommand = (state: EditorState, dispatch?: (tr: Transaction) => void) => boolean
-
-const MODE_COLORS: Record<AccessMode, { bg: string; border: string; color: string; label: string }> = {
-  'data-entry': { bg: '#f0fdf4', border: '#4caf50', color: '#15803d', label: '✏ Data Entry' },
-  'analyst':    { bg: '#eff6ff', border: '#4f8ef7', color: '#1d4ed8', label: '📊 Analyst'   },
-  'admin':      { bg: '#fef3c7', border: '#f59e0b', color: '#92400e', label: '⚙ Admin'      },
-}
 
 const S = {
   bar: {
@@ -67,6 +60,7 @@ interface WordoRibbonProps {
   onExportDocx?: () => void
   onExportPdf?: () => void
   onExportMarkdown?: () => void
+  onExportAuditJson?: () => void
   onImportDocx?: () => void
   onImportMarkdown?: () => void
   onUndo?: () => void
@@ -86,6 +80,7 @@ interface WordoRibbonProps {
 
 export const WordoRibbon: React.FC<WordoRibbonProps> = ({
   onNewDocument, onPageSettings, onInsertNexcel, onExportDocx, onExportPdf, onExportMarkdown,
+  onExportAuditJson,
   onImportDocx, onImportMarkdown, onUndo, onRedo,
   onAddComment, onToggleCommentPanel, onAcceptAllChanges, onRejectAllChanges, onSave, onFindReplace, activeTab = 'Home',
   showCommentPanel = false, openCommentCount = 0, pendingChangeCount = 0, wordCount = 0,
@@ -93,7 +88,6 @@ export const WordoRibbon: React.FC<WordoRibbonProps> = ({
   const { document: doc, setTitle, addSection, orchestrator, focusedSectionId } = useWordoStore()
   const access = useWordoAccessStore()
   const trackChange = useTrackChangeStore()
-  const mc = MODE_COLORS[access.mode]
   const [highlightColor, setHighlightColor] = useState('#fff176')
   const [fontColor, setFontColor] = useState('#000000')
   const highlightColorRef = useRef<HTMLInputElement>(null)
@@ -254,31 +248,6 @@ export const WordoRibbon: React.FC<WordoRibbonProps> = ({
           </button>
         )}
 
-        {/* Access mode selector */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-          <span style={{ fontSize: 10, color: 'var(--text-muted, #94a3b8)', marginRight: 2, letterSpacing: 0.5 }}>MODE</span>
-          {(['data-entry', 'analyst', 'admin'] as AccessMode[]).map(m => {
-            const c = MODE_COLORS[m]
-            const active = access.mode === m
-            return (
-              <button
-                key={m}
-                onClick={() => access.setMode(m)}
-                style={{
-                  padding: '2px 9px', borderRadius: 4, fontSize: 10, fontWeight: 600,
-                  border: `1px solid ${active ? c.border : '#e2e8f0'}`,
-                  background: active ? c.bg : 'var(--surface-alt, #f8fafc)',
-                  color: active ? c.color : 'var(--text-muted, #94a3b8)',
-                  cursor: 'pointer', transition: 'all 0.12s',
-                  letterSpacing: 0.3,
-                }}
-              >
-                {c.label}
-              </button>
-            )
-          })}
-        </div>
-
         <span style={{ color: 'var(--text-muted, #94a3b8)', fontSize: 10, marginLeft: 6, whiteSpace: 'nowrap' }}>
           {doc.sections.length} section{doc.sections.length !== 1 ? 's' : ''}
           {focusedSectionId ? ' · editing' : ' · click page to edit'}
@@ -298,6 +267,7 @@ export const WordoRibbon: React.FC<WordoRibbonProps> = ({
           <div style={S.sep} />
           <button style={S.actionBtn(!access.canExport, '#5b21b6', '#f5f3ff', '#c4b5fd')} disabled={!access.canExport} onClick={onExportDocx}>↓ Save As .docx</button>
           <button style={S.actionBtn(!access.canExport, '#5b21b6', '#f5f3ff', '#c4b5fd')} disabled={!access.canExport} onClick={onExportMarkdown}>↓ Export .md</button>
+          <button style={S.actionBtn(!access.canExport, '#5b21b6', '#f5f3ff', '#c4b5fd')} disabled={!access.canExport} onClick={onExportAuditJson}>↓ Export Audit .json</button>
           <button style={S.actionBtn(!access.canExport, '#5b21b6', '#f5f3ff', '#c4b5fd')} disabled={!access.canExport} onClick={onExportPdf}>🖨 Print / PDF</button>
         </>
       )}
@@ -429,7 +399,7 @@ export const WordoRibbon: React.FC<WordoRibbonProps> = ({
           <div style={S.sep} />
           <button style={S.actionBtn(!access.canInsertBlocks, '#15803d', '#f0fdf4', '#86efac')} disabled={!access.canInsertBlocks} onClick={onInsertNexcel}>📊 Nexcel</button>
           <div style={S.sep} />
-          <button style={S.actionBtn(!access.canInsertSections, '#1d4ed8', '#eff6ff', '#93c5fd')} disabled={!access.canInsertSections} onClick={addSection}>⊞ Section</button>
+          <button style={S.actionBtn(!access.canInsertSections, '#1d4ed8', '#eff6ff', '#93c5fd')} disabled={!access.canInsertSections} onClick={() => addSection()}>⊞ Section</button>
         </>
       )}
 

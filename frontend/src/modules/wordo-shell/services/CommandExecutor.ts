@@ -8,14 +8,15 @@
 import { wordoSchema } from '../editor/schema'
 import { createLogger } from '../editor/logger'
 import type { LayoutOrchestrator } from '../editor/LayoutOrchestrator'
-import type { WordoCommand } from '../types/commands'
-import type { AnyBlock, ParagraphBlock, HeadingBlock } from '../types/document'
+import type { WordoCommand, WordoCommandResult } from '../types/commands'
+import { createDocumentWarning, createOperationId, type AnyBlock, type ParagraphBlock, type HeadingBlock, type Run } from '../types/document'
 
 const log = createLogger('Cmd')
 
 export interface ExecuteResult {
   success: boolean
   error?: string
+  commandResult?: WordoCommandResult
 }
 
 // ── Block → PM node conversion ────────────────────────────────
@@ -47,6 +48,47 @@ function blockToNode(block: AnyBlock) {
   }
 }
 
+function runsToPmContent(runs: Run[]) {
+  if (runs.length === 0) return [wordoSchema.text(' ')]
+
+  return runs.map(run => {
+    const marks = run.marks.flatMap(mark => {
+      switch (mark.type) {
+        case 'link':
+          return mark.attrs?.href ? [wordoSchema.marks.link.create({ href: mark.attrs.href })] : []
+        case 'superscript':
+          return [wordoSchema.marks.superscript.create()]
+        case 'subscript':
+          return [wordoSchema.marks.subscript.create()]
+        case 'underline':
+          return [wordoSchema.marks.underline.create()]
+        case 'strikethrough':
+          return [wordoSchema.marks.strikethrough.create()]
+        case 'bold':
+        case 'italic':
+        case 'code': {
+          const markType = wordoSchema.marks[mark.type]
+          return markType ? [markType.create()] : []
+        }
+        default:
+          return []
+      }
+    })
+
+    if (run.charFormat?.color) {
+      marks.push(wordoSchema.marks.font_color.create({ color: String(run.charFormat.color) }))
+    }
+    if (run.charFormat?.fontSize) {
+      marks.push(wordoSchema.marks.font_size.create({ size: String(run.charFormat.fontSize) }))
+    }
+    return wordoSchema.text(run.text, marks)
+  })
+}
+
+function textToPmContent(text: string) {
+  return [wordoSchema.text(text.length > 0 ? text : ' ')]
+}
+
 // ── Find block position in a section ─────────────────────────
 
 function findBlockPos(state: import('prosemirror-state').EditorState, blockId: string): number | null {
@@ -55,6 +97,33 @@ function findBlockPos(state: import('prosemirror-state').EditorState, blockId: s
     if (node.attrs?.id === blockId) found = pos
   })
   return found
+}
+
+function makeCommandResult(
+  command: WordoCommand,
+  changedObjectIds: string[],
+  overrides: Partial<WordoCommandResult> = {},
+): WordoCommandResult {
+  return {
+    operationId: command.operationId ?? createOperationId(),
+    changedObjectIds,
+    layoutImpact: 'local',
+    warnings: [],
+    idMapping: [],
+    ...overrides,
+  }
+}
+
+function toParagraphCssValue(value: string | number | undefined, unit = 'pt'): string | null | undefined {
+  if (value === undefined) return undefined
+  if (value === null) return null
+  if (typeof value === 'number') return `${value}${unit}`
+  return value
+}
+
+function toIndentLeft(indentLevel: number | undefined): string | null | undefined {
+  if (indentLevel === undefined) return undefined
+  return `${indentLevel * 18}pt`
 }
 
 // ── Command handlers ──────────────────────────────────────────
@@ -78,7 +147,7 @@ function handleInsertBlock(cmd: Extract<WordoCommand, { type: 'insert_block' }>,
   tr.setMeta('addToHistory', true)
   orch.applyTransaction(cmd.sectionId, tr)
   log.info('insert-block-ok', { sectionId: cmd.sectionId, blockType: cmd.block.type, blockId: cmd.block.id })
-  return { success: true }
+  return { success: true, commandResult: makeCommandResult(cmd, [cmd.block.id, cmd.sectionId]) }
 }
 
 function handleDeleteBlock(cmd: Extract<WordoCommand, { type: 'delete_block' }>, orch: LayoutOrchestrator): ExecuteResult {
@@ -93,7 +162,7 @@ function handleDeleteBlock(cmd: Extract<WordoCommand, { type: 'delete_block' }>,
   tr.setMeta('addToHistory', true)
   orch.applyTransaction(cmd.sectionId, tr)
   log.info('delete-block-ok', { sectionId: cmd.sectionId, blockId: cmd.blockId })
-  return { success: true }
+  return { success: true, commandResult: makeCommandResult(cmd, [cmd.blockId, cmd.sectionId]) }
 }
 
 function handleRewriteBlock(cmd: Extract<WordoCommand, { type: 'rewrite_block' }>, orch: LayoutOrchestrator): ExecuteResult {
@@ -104,19 +173,92 @@ function handleRewriteBlock(cmd: Extract<WordoCommand, { type: 'rewrite_block' }
   if (pos === null) return { success: false, error: `block not found: ${cmd.blockId}` }
 
   const node = inst.state.doc.nodeAt(pos)!
-  const newContent = wordoSchema.text(cmd.newText)
+  const newContent = textToPmContent(cmd.newText)
   const newNode = node.type.create(node.attrs, newContent)
   const tr = inst.state.tr.replaceWith(pos, pos + node.nodeSize, newNode)
   tr.setMeta('addToHistory', true)
   orch.applyTransaction(cmd.sectionId, tr)
   log.info('rewrite-block-ok', { sectionId: cmd.sectionId, blockId: cmd.blockId, textLength: cmd.newText.length })
-  return { success: true }
+  return { success: true, commandResult: makeCommandResult(cmd, [cmd.blockId, cmd.sectionId]) }
+}
+
+function handleUpdateBlock(cmd: Extract<WordoCommand, { type: 'update_block' }>, orch: LayoutOrchestrator): ExecuteResult {
+  const inst = orch.getSection(cmd.sectionId)
+  if (!inst) return { success: false, error: `section not found: ${cmd.sectionId}` }
+
+  const pos = findBlockPos(inst.state, cmd.blockId)
+  if (pos === null) return { success: false, error: `block not found: ${cmd.blockId}` }
+
+  const node = inst.state.doc.nodeAt(pos)
+  if (!node) return { success: false, error: `block not found: ${cmd.blockId}` }
+
+  const patch = cmd.patch ?? {}
+  const unsupportedWarnings = []
+  const nextAttrs = { ...node.attrs }
+
+  if (patch.alignment !== undefined) nextAttrs.textAlign = patch.alignment
+  if (patch.lineSpacing !== undefined) nextAttrs.lineSpacing = toParagraphCssValue(patch.lineSpacing, '')
+  if (patch.spaceBefore !== undefined) nextAttrs.spaceBefore = toParagraphCssValue(patch.spaceBefore)
+  if (patch.spaceAfter !== undefined) nextAttrs.spaceAfter = toParagraphCssValue(patch.spaceAfter)
+  if (patch.indentLevel !== undefined) nextAttrs.indentLeft = toIndentLeft(patch.indentLevel)
+  if (patch.pageBreakBefore !== undefined) nextAttrs.pageBreakBefore = patch.pageBreakBefore
+  if (patch.level !== undefined) {
+    if (node.type.name === 'heading') nextAttrs.level = patch.level
+    else {
+      unsupportedWarnings.push(createDocumentWarning('update_block.level_ignored', 'Heading level patch only applies to heading blocks.', { objectId: cmd.blockId }))
+    }
+  }
+  if (patch.styleId !== undefined) {
+    unsupportedWarnings.push(createDocumentWarning('update_block.style_id_ignored', 'styleId patch is not yet wired into ProseMirror attrs.', { objectId: cmd.blockId }))
+  }
+  if (patch.layoutProps !== undefined) {
+    unsupportedWarnings.push(createDocumentWarning('update_block.layout_props_ignored', 'layoutProps patch is not yet wired into ProseMirror attrs.', { objectId: cmd.blockId }))
+  }
+  if (patch.listType !== undefined) {
+    unsupportedWarnings.push(createDocumentWarning('update_block.list_type_ignored', 'listType patch requires list structure conversion and is not implemented yet.', { objectId: cmd.blockId }))
+  }
+
+  const nextContent = patch.content
+    ? runsToPmContent(patch.content)
+    : patch.text !== undefined
+      ? textToPmContent(patch.text)
+      : node.content
+
+  const replacement = node.type.create(nextAttrs, nextContent, node.marks)
+  const tr = inst.state.tr.replaceWith(pos, pos + node.nodeSize, replacement)
+  tr.setMeta('addToHistory', true)
+  orch.applyTransaction(cmd.sectionId, tr)
+
+  log.info('update-block-ok', {
+    sectionId: cmd.sectionId,
+    blockId: cmd.blockId,
+    patchedKeys: Object.keys(patch),
+  })
+
+  return {
+    success: true,
+    commandResult: makeCommandResult(cmd, [cmd.blockId, cmd.sectionId], {
+      warnings: unsupportedWarnings,
+    }),
+  }
 }
 
 function handleApplyStyle(cmd: Extract<WordoCommand, { type: 'apply_style' }>, orch: LayoutOrchestrator): ExecuteResult {
   // Style application is a future feature — log and acknowledge
   log.warn('apply-style-not-implemented', { styleId: cmd.styleId })
-  return { success: false, error: 'apply_style not yet implemented' }
+  return {
+    success: false,
+    error: 'apply_style not yet implemented',
+    commandResult: makeCommandResult(cmd, [cmd.blockId, cmd.sectionId], {
+      layoutImpact: 'none',
+      warnings: [
+        createDocumentWarning('apply_style_not_implemented', 'apply_style not yet implemented', {
+          objectId: cmd.blockId,
+          severity: 'warn',
+        }),
+      ],
+    }),
+  }
 }
 
 // ── Main dispatcher ───────────────────────────────────────────
@@ -158,8 +300,7 @@ export function executeCommand(
         result = { success: false, error: `${command.type}: dispatch to store instead` }
         break
       case 'update_block':
-        log.warn('update-block-not-implemented', {})
-        result = { success: false, error: 'update_block not yet implemented' }
+        result = handleUpdateBlock(command, orchestrator)
         break
       default:
         log.warn('unknown-command', { type: (command as any).type })

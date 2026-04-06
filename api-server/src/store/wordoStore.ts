@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import type {
   KasumiDocument, DocumentSection, AnyBlock,
-  Comment, TrackChange, PageStyle,
+  Comment, TrackChange, PageStyle, HeaderFooterContent, WatermarkConfig,
 } from '../types'
 
 // ─── DEFAULT DOCUMENT ────────────────────────────────────────────────────────
@@ -52,6 +52,16 @@ class WordoStore {
   trackChanges: TrackChange[] = []
   trackingEnabled = false
   accessMode: 'data-entry' | 'analyst' | 'admin' = 'analyst'
+  commandAudit: unknown[] = []
+
+  reset(): void {
+    this.document = createDefaultDocument()
+    this.comments = []
+    this.trackChanges = []
+    this.trackingEnabled = false
+    this.accessMode = 'analyst'
+    this.commandAudit = []
+  }
 
   getDocument(): KasumiDocument {
     return this.document
@@ -98,6 +108,26 @@ class WordoStore {
     const section = this.getSection(sectionId)
     if (!section) return null
     Object.assign(section.pageStyle, pageStyle)
+    this.document.updatedAt = new Date().toISOString()
+    return section
+  }
+
+  updateSectionWatermark(sectionId: string, watermark: WatermarkConfig | undefined): DocumentSection | null {
+    const section = this.getSection(sectionId)
+    if (!section) return null
+    section.watermark = watermark
+    this.document.updatedAt = new Date().toISOString()
+    return section
+  }
+
+  updateSectionHeaderFooter(
+    sectionId: string,
+    zone: 'header' | 'footer',
+    value: string | HeaderFooterContent | undefined,
+  ): DocumentSection | null {
+    const section = this.getSection(sectionId)
+    if (!section) return null
+    section[zone] = value
     this.document.updatedAt = new Date().toISOString()
     return section
   }

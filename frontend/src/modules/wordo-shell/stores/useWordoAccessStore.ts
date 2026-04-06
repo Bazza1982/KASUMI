@@ -1,11 +1,11 @@
 // ============================================================
 // KASUMI WORDO — Access Store
-// Extends the platform access-control with WORDO-specific caps.
-// Stored separately so Nexcel and WORDO can have independent modes.
+// WORDO follows a Word-style model: if a user can open the document,
+// they can fully edit it. Access control happens before the document
+// is opened, not inside the editor surface.
 // ============================================================
 
 import { create } from 'zustand'
-import type { AccessMode } from '../../../platform/types'
 
 export interface WordoCapabilities {
   // Content editing
@@ -29,75 +29,19 @@ export interface WordoCapabilities {
   canImport: boolean
 }
 
-const CAPABILITIES: Record<AccessMode, WordoCapabilities> = {
-  'data-entry': {
-    canEditBody:         true,
-    canInsertBlocks:     false,
-    canDeleteBlocks:     false,
-    canFillBindings:     true,
-    canInsertSections:   false,
-    canEditHeaderFooter: false,
-    canSetWatermark:     false,
-    canSetPageStyle:     false,
-    canModifyStyles:     false,
-    canModifyTemplate:   false,
-    canExport:           false,
-    canImport:           false,
-  },
-  'analyst': {
-    canEditBody:         true,
-    canInsertBlocks:     true,
-    canDeleteBlocks:     true,
-    canFillBindings:     true,
-    canInsertSections:   true,
-    canEditHeaderFooter: true,
-    canSetWatermark:     false,
-    canSetPageStyle:     true,
-    canModifyStyles:     false,
-    canModifyTemplate:   false,
-    canExport:           true,
-    canImport:           true,
-  },
-  'admin': {
-    canEditBody:         true,
-    canInsertBlocks:     true,
-    canDeleteBlocks:     true,
-    canFillBindings:     true,
-    canInsertSections:   true,
-    canEditHeaderFooter: true,
-    canSetWatermark:     true,
-    canSetPageStyle:     true,
-    canModifyStyles:     true,
-    canModifyTemplate:   true,
-    canExport:           true,
-    canImport:           true,
-  },
+const DEFAULT_CAPABILITIES: WordoCapabilities = {
+  canEditBody:         true,
+  canInsertBlocks:     true,
+  canDeleteBlocks:     true,
+  canFillBindings:     true,
+  canInsertSections:   true,
+  canEditHeaderFooter: true,
+  canSetWatermark:     true,
+  canSetPageStyle:     true,
+  canModifyStyles:     true,
+  canModifyTemplate:   true,
+  canExport:           true,
+  canImport:           true,
 }
 
-const STORAGE_KEY = 'kasumi_wordo_access_mode'
-
-const savedMode = (typeof localStorage !== 'undefined'
-  ? localStorage.getItem(STORAGE_KEY)
-  : null) as AccessMode | null
-
-const initialMode: AccessMode =
-  savedMode && ['data-entry', 'analyst', 'admin'].includes(savedMode)
-    ? savedMode
-    : 'analyst'
-
-interface WordoAccessState extends WordoCapabilities {
-  mode: AccessMode
-  setMode: (mode: AccessMode) => void
-}
-
-export const useWordoAccessStore = create<WordoAccessState>((set) => ({
-  mode: initialMode,
-  ...CAPABILITIES[initialMode],
-
-  setMode: (mode) => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(STORAGE_KEY, mode)
-    }
-    set({ mode, ...CAPABILITIES[mode] })
-  },
-}))
+export const useWordoAccessStore = create<WordoCapabilities>(() => DEFAULT_CAPABILITIES)

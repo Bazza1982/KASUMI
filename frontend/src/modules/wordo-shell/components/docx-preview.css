@@ -1,0 +1,35 @@
+.wordo-docx-preview-shell {
+  min-height: 100%;
+  padding: 32px 0 60px;
+}
+
+.wordo-docx-preview-status,
+.wordo-docx-preview-error {
+  width: min(980px, calc(100% - 48px));
+  margin: 0 auto 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.wordo-docx-preview-status {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.wordo-docx-preview-error {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.wordo-docx-preview-host {
+  min-height: 100%;
+}
+
+.wordo-docx-preview-host > section.wordo-docx-preview {
+  margin: 0 auto 32px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+}

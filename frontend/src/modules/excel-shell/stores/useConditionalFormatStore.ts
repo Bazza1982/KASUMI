@@ -20,6 +20,7 @@ interface ConditionalFormatState {
   deleteRule: (id: string) => void
   getRulesForField: (fieldId: number) => ConditionalFormatRule[]
   evaluateCell: (fieldId: number, value: unknown) => CellFormat | null
+  reset: () => void
   persist: () => void
   load: () => void
 }
@@ -74,6 +75,11 @@ export const useConditionalFormatStore = create<ConditionalFormatState>((set, ge
       }
     }
     return null
+  },
+
+  reset: () => {
+    set({ rules: [] })
+    get().persist()
   },
 
   persist: () => {

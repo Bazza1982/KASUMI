@@ -2,6 +2,14 @@ import { Router, Request, Response } from 'express'
 import { wordoStore } from '../store/wordoStore'
 import { ok, err } from '../middleware/respond'
 import type { AnyBlock, PageStyle } from '../types'
+import {
+  clearWordoCommandAudit,
+  executeWordoSemanticCommand,
+  executeWordoSemanticTool,
+  exportWordoCommandAudit,
+  getWordoCommandSurface,
+  getWordoSemanticToolDefinitions,
+} from '../wordo/semantic'
 
 const router = Router()
 
@@ -24,6 +32,68 @@ router.get('/state', (_req: Request, res: Response) => {
 // GET /api/wordo/document — full document JSON
 router.get('/document', (_req: Request, res: Response) => {
   res.json(ok(wordoStore.getDocument()))
+})
+
+// GET /api/wordo/commands/surface — semantic command surface for AI / MCP clients
+router.get('/commands/surface', (_req: Request, res: Response) => {
+  res.json(ok(getWordoCommandSurface()))
+})
+
+// POST /api/wordo/commands/execute — execute a semantic command
+router.post('/commands/execute', (req: Request, res: Response) => {
+  const { type, payload, source, description } = req.body as {
+    type?: string
+    payload?: Record<string, unknown>
+    source?: 'api' | 'mcp' | 'ai' | 'user'
+    description?: string
+  }
+
+  if (!type || !payload) {
+    return res.status(400).json(err('type and payload required', 400))
+  }
+
+  const result = executeWordoSemanticCommand(type, payload, source ?? 'api', description)
+  if (!result.success) {
+    return res.status(400).json(err(result.error, 400))
+  }
+
+  return res.json(ok(result.commandResult))
+})
+
+// GET /api/wordo/mcp/tools — generated wordo.* tool definitions
+router.get('/mcp/tools', (_req: Request, res: Response) => {
+  res.json(ok(getWordoSemanticToolDefinitions()))
+})
+
+// POST /api/wordo/mcp/execute — execute a generated wordo.* tool call
+router.post('/mcp/execute', (req: Request, res: Response) => {
+  const { toolName, args, source } = req.body as {
+    toolName?: string
+    args?: Record<string, unknown>
+    source?: 'api' | 'mcp' | 'ai' | 'user'
+  }
+
+  if (!toolName || !args) {
+    return res.status(400).json(err('toolName and args required', 400))
+  }
+
+  const result = executeWordoSemanticTool(toolName, args, source ?? 'mcp')
+  if (!result.success) {
+    return res.status(400).json(err(result.error, 400))
+  }
+
+  return res.json(ok(result.commandResult))
+})
+
+// GET /api/wordo/command-audit — structured audit export
+router.get('/command-audit', (_req: Request, res: Response) => {
+  res.json(ok(exportWordoCommandAudit()))
+})
+
+// DELETE /api/wordo/command-audit — clear audit history
+router.delete('/command-audit', (_req: Request, res: Response) => {
+  clearWordoCommandAudit()
+  res.json(ok({ cleared: true }))
 })
 
 // PUT /api/wordo/document — replace document

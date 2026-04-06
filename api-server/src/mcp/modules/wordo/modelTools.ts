@@ -6,6 +6,12 @@ import type { McpToolDefinition, McpToolResult } from '../../types'
 import { wordoStore } from '../../../store/wordoStore'
 import { broadcast } from '../../services/WsServer'
 import type { PageStyle, NexcelEmbedBlock } from '../../../types'
+import {
+  executeWordoSemanticTool,
+  exportWordoCommandAudit,
+  getWordoCommandSurface,
+  getWordoSemanticToolDefinitions,
+} from '../../../wordo/semantic'
 
 function json(data: unknown): McpToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
@@ -147,6 +153,72 @@ const wordo_insert_nexcel_embed: McpToolDefinition = {
   },
 }
 
+const wordo_get_command_surface: McpToolDefinition = {
+  name: 'wordo_get_command_surface',
+  module: 'wordo',
+  version: '1.0.0',
+  description: 'Return the semantic Wordo document command surface exposed for API and MCP clients.',
+  readOnly: true,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+  handler: async () => json(getWordoCommandSurface()),
+}
+
+const wordo_list_semantic_tools: McpToolDefinition = {
+  name: 'wordo_list_semantic_tools',
+  module: 'wordo',
+  version: '1.0.0',
+  description: 'Return generated wordo.* tool definitions derived from the semantic command surface.',
+  readOnly: true,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+  handler: async () => json(getWordoSemanticToolDefinitions()),
+}
+
+const wordo_execute_semantic_command: McpToolDefinition = {
+  name: 'wordo_execute_semantic_command',
+  module: 'wordo',
+  version: '1.0.0',
+  description: 'Execute a semantic wordo.* command by tool name and arguments on the server-side document store.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      toolName: { type: 'string', description: 'Generated semantic tool name such as "wordo.rewrite_block".' },
+      args: { type: 'object', description: 'Arguments payload for the tool call.' },
+      source: { type: 'string', description: 'Audit source label.', enum: ['mcp', 'api', 'ai', 'user'] },
+    },
+    required: ['toolName', 'args'],
+  },
+  handler: async (args) => {
+    const toolName = String(args.toolName ?? '')
+    const toolArgs = (args.args ?? {}) as Record<string, unknown>
+    const result = executeWordoSemanticTool(toolName, toolArgs, (args.source as 'mcp' | 'api' | 'ai' | 'user' | undefined) ?? 'mcp')
+    if (!result.success) return err(result.error)
+    broadcast('wordo:semantic_command_executed', { toolName, changedObjectIds: result.commandResult.changedObjectIds })
+    return json(result.commandResult)
+  },
+}
+
+const wordo_export_command_audit: McpToolDefinition = {
+  name: 'wordo_export_command_audit',
+  module: 'wordo',
+  version: '1.0.0',
+  description: 'Export the structured command audit bundle for the current server-side Wordo document.',
+  readOnly: true,
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    required: [],
+  },
+  handler: async () => json(exportWordoCommandAudit()),
+}
+
 // ─── Export ───────────────────────────────────────────────────────────────────
 
 export const wordoModelTools: McpToolDefinition[] = [
@@ -154,4 +226,8 @@ export const wordoModelTools: McpToolDefinition[] = [
   wordo_append_section,
   wordo_delete_section,
   wordo_insert_nexcel_embed,
+  wordo_get_command_surface,
+  wordo_list_semantic_tools,
+  wordo_execute_semantic_command,
+  wordo_export_command_audit,
 ]

@@ -9,6 +9,19 @@ const SPLASH_KEY = 'kasumi_splash_seen'
 const POS_KEY = 'kasumi_switcher_pos'
 const SURFACE_KEY = 'kasumi_surface_session'
 
+// ── Embed mode (Minato iframe) ────────────────────────────────────────────────
+// When Kasumi is embedded inside Minato via an iframe, URL params control mode:
+//   ?mode=embed&type=nexcel|wordo&artefact_id=xxx&minato_api=http://localhost:8000
+function parseEmbedParams(): { isEmbed: boolean; type: KasumiShell; artefactId: string; minatoApi: string } | null {
+  const p = new URLSearchParams(window.location.search)
+  if (p.get('mode') !== 'embed') return null
+  const type = p.get('type') as KasumiShell | null
+  const artefactId = p.get('artefact_id') ?? ''
+  const minatoApi = p.get('minato_api') ?? 'http://localhost:8000'
+  if (!type || !artefactId) return null
+  return { isEmbed: true, type, artefactId, minatoApi }
+}
+
 type SurfaceSessionState = {
   nexcel: {
     target: 'grid' | 'formula-bar'
@@ -24,6 +37,27 @@ const DEFAULT_SURFACE_SESSION: SurfaceSessionState = {
 }
 
 function App() {
+  const embedParams = parseEmbedParams()
+
+  // ── Embed mode: render only the requested shell, no chrome ────────────────
+  if (embedParams) {
+    const { type, artefactId, minatoApi } = embedParams
+    if (type === 'nexcel') {
+      return (
+        <div className="app" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+          <ExcelShellRoute embedConfig={{ artefactId, minatoApi }} />
+        </div>
+      )
+    }
+    if (type === 'wordo') {
+      return (
+        <div className="app" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+          <WordoShellRoute embedConfig={{ artefactId, minatoApi }} />
+        </div>
+      )
+    }
+  }
+
   const saved = (typeof localStorage !== 'undefined' ? localStorage.getItem(SHELL_KEY) : null) as KasumiShell | null
   const [shell, setShell] = useState<KasumiShell>(saved ?? 'nexcel')
   const [surfaceSession, setSurfaceSession] = useState<SurfaceSessionState>(() => {
