@@ -50,7 +50,34 @@
 
 ---
 
-## 下一步 — v1.2 正式版（Electron 桌面打包）
+## ✅ v1.3-alpha — WORDO 高保真 + AI 原生升级（已完成，2026-04-07）
+
+> 目标：让 WORDO 达到 Word 级别的文档保真度，并完成 AI/MCP 接入层。
+
+### WORDO 高保真 .docx 管道
+- ✅ `DocxImporter`：`.docx` → Kasumi Document IR（图片、间距、字体、节结构）
+- ✅ `DocxExporter`：Document IR → `.docx` 完整格式往返
+- ✅ `DocumentFidelity`：保真度评分（10+ 维度）
+- ✅ `FidelityRegression`：跨版本保真度回归检测
+- ✅ `PaginationSnapshotBuilder`：分页布局快照，实现页面精确预览
+- ✅ `DocxPreviewSurface`：Word 式分页预览界面组件
+- ✅ `DocxDiagnosticsBanner`：导入警告和保真度评分内联展示
+
+### WORDO MCP 接入层
+- ✅ `SemanticCommandService`：统一 AI 文档命令执行管道
+- ✅ `WordoMcpAdapter`：语义命令包装为 MCP 工具，供 Minato 等 AI Agent 调用
+- ✅ `CommandAuditExporter`：AI 命令带时间戳记录，支持审计与回放
+
+### Nexcel Minato 适配器
+- ✅ `MinatoNexcelAdapter`：Nexcel 嵌入编辑器模式的 Minato artefact 集成
+
+### 测试
+- ✅ **200+ 单元测试**（新增 10 个测试套件）
+- ✅ 新增 E2E：`wordo-docx.spec.ts`
+
+---
+
+## 下一步 — v1.3 正式版（Electron 桌面打包）
 
 > 目标：让 KASUMI Platform 成为可安装的 Windows 桌面应用。
 

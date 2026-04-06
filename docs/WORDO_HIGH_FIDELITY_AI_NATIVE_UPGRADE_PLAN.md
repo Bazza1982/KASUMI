@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft for review
+Implemented — 2026-04-07
 
 ## Goal
 

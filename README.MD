@@ -185,6 +185,36 @@ Embedded tables are rendered as `NexcelEmbedView` ProseMirror NodeViews and appe
 | `.docx` | Import | `mammoth` → HTML → ProseMirror; multi-section support |
 | `.pdf` | Export | Browser print dialog with `@media print` pagination |
 
+### High-Fidelity .docx Pipeline
+
+WORDO includes a full high-fidelity document layer for real-world `.docx` files:
+
+| Service | Purpose |
+|---------|---------|
+| `DocxImporter` | Converts `.docx` → canonical Kasumi Document IR (images, spacing, fonts, section layout) |
+| `DocxExporter` | Exports document IR → `.docx` with full formatting round-trip |
+| `DocumentFidelity` | Scores import quality across 10+ fidelity dimensions (fonts, images, tables, spacing…) |
+| `FidelityRegression` | Detects fidelity regressions across importer versions |
+| `PaginationSnapshotBuilder` | Builds paginated layout snapshots for high-fidelity page-accurate preview |
+| `DocxPreviewSurface` | Renders paginated `.docx` preview with Word-accurate page boundaries |
+| `DocxDiagnosticsBanner` | Shows import warnings and fidelity score inline in the editor |
+
+**Design principle:** `Render fidelity for humans, semantic fidelity for AI.`
+
+See [docs/WORDO_HIGH_FIDELITY_AI_NATIVE_UPGRADE_PLAN.md](docs/WORDO_HIGH_FIDELITY_AI_NATIVE_UPGRADE_PLAN.md) for the full architecture.
+
+### MCP Adapter
+
+WORDO exposes a native MCP tool surface via `WordoMcpAdapter` and `SemanticCommandService`:
+
+| Component | Role |
+|-----------|------|
+| `SemanticCommandService` | Unified execution pipeline for all AI document commands |
+| `WordoMcpAdapter` | MCP tool delegation — wraps semantic commands as MCP-callable tools |
+| `CommandAuditExporter` | Records all AI commands with timestamps for audit / replay |
+
+This enables AI agents (e.g. Minato via MCP) to read, reason about, and safely modify document structure without DOM access.
+
 ### AI Command System
 
 WORDO exposes 17 typed commands through the platform command-bus:
@@ -270,16 +300,21 @@ Kasumi/
     │   │   │   └── ExcelShellRoute.tsx
     │   │   │
     │   │   └── wordo-shell/                 ← KASUMI WORDO
-    │   │       ├── components/              # WordoRibbon, OutlinePanel, PageSettingsPanel...
+    │   │       ├── components/              # WordoRibbon, OutlinePanel, PageSettingsPanel,
+    │   │       │                            # DocxPreviewSurface, DocxDiagnosticsBanner
     │   │       ├── editor/                  # SectionEditor, LayoutOrchestrator, schema, plugins
-    │   │       ├── services/
+    │   │       ├── services/                # DocxImporter, DocxExporter, DocumentFidelity,
+    │   │       │                            # PaginationSnapshotBuilder, FidelityRegression,
+    │   │       │                            # SemanticCommandService, WordoMcpAdapter,
+    │   │       │                            # CommandAuditExporter, DocumentPersistence
     │   │       ├── stores/                  # useWordoStore + useWordoAccessStore
     │   │       ├── types/                   # Document IR types + commands
     │   │       └── WordoShellRoute.tsx
     │   │
     │   ├── test/
-    │   │   ├── unit/                        # 166 unit tests (77 Nexcel + 89 WORDO)
-    │   │   └── e2e/                         # Playwright E2E suite
+    │   │   ├── unit/                        # 200+ unit tests (Nexcel + WORDO)
+    │   │   ├── fixtures/                    # Synthetic .docx fidelity fixtures
+    │   │   └── e2e/                         # Playwright E2E (grid + wordo-docx)
     │   │
     │   ├── App.tsx                          # Shell switcher + Splash screen
     │   ├── index.css                        # Design Token system + global styles
@@ -388,7 +423,7 @@ npm run test:coverage    # Coverage report (V8)
 npm run test:ui          # Vitest browser UI
 ```
 
-**166 tests across both shells:**
+**200+ tests across both shells:**
 
 | Suite | File | Coverage |
 |-------|------|----------|
@@ -397,11 +432,22 @@ npm run test:ui          # Vitest browser UI
 | | `BaserowAdapter.test.ts` | HTTP mapping + error handling |
 | | `client.test.ts` | BaserowHttpClient all methods |
 | | `store.test.ts` | Zustand actions (load, edit, sort, undo/redo) |
-| **WORDO** | `wordo-accessStore.test.ts` | 12 WORDO capabilities × 3 access modes |
+| | `ribbon.test.tsx` | Nexcel Ribbon rendering + menu actions |
+| **WORDO** | `wordoAccessStore.test.ts` | 12 WORDO capabilities × 3 access modes |
 | | `layoutOrchestrator.test.ts` | Section management + content flow |
 | | `docxImporter.test.ts` | mammoth → ProseMirror conversion |
-| | `wordo-store.test.ts` | Document store actions |
-| | `wordoRibbon.test.ts` | Ribbon button rendering + access gating |
+| | `useWordoStore.test.ts` | Document store actions |
+| | `wordoRibbon.test.tsx` | Ribbon button rendering + access gating |
+| | `docxExporter.test.ts` | .docx export — all block types + formatting |
+| | `documentFidelity.test.ts` | Fidelity scoring across 10+ dimensions |
+| | `paginationSnapshotBuilder.test.ts` | Paginated layout snapshot output |
+| | `semanticCommandService.test.ts` | AI command execution pipeline |
+| | `docxDiagnosticsBanner.test.tsx` | Import warning banner rendering |
+| | `docxPreviewSurface.test.tsx` | Paginated preview surface rendering |
+| | `documentPersistence.test.ts` | Document save/load round-trip |
+| | `documentTypes.test.ts` | Document IR type validation |
+| **E2E** | `grid.spec.ts` | Nexcel grid interactions |
+| | `wordo-docx.spec.ts` | WORDO .docx import → preview flow |
 
 ### E2E Tests
 
@@ -447,9 +493,9 @@ ELECTRON=true npm run electron:build  # Electron production build
 
 See [ROADMAP.md](ROADMAP.md) for the full release plan.
 
-**Current status: v1.2-beta complete** — dual-shell platform with 166 passing tests.
+**Current status: v1.3-alpha** — high-fidelity WORDO docx pipeline + MCP adapter + Minato integration, 200+ tests.
 
-**Next milestone: v1.2 release** — Electron desktop packaging (Windows `.exe`).
+**Next milestone: v1.3 release** — Electron desktop packaging (Windows `.exe`).
 
 Planned: Dark mode, i18n, WORDO table of contents, comments/annotations, and AI-native query layer (v2.0).
 
